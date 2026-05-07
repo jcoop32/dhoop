@@ -21,7 +21,7 @@ services:
     container_name: whoop_ingest
     restart: unless-stopped
     ports:
-      - "9001:9001"
+      - "100.127.237.13:9001:9001"  # Tailscale only — not reachable from public internet
     environment:
       REDIS_URL: redis://redis:6379   # internal Docker network — always 6379 here
       API_KEY: ${API_KEY}             # sourced from .env
