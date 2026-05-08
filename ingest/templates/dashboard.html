@@ -42,6 +42,21 @@
             color: #ef4444;
             border: 1px solid rgba(239, 68, 68, 0.5);
         }
+        .battery-badge {
+            padding: 8px 16px;
+            border-radius: 9999px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            margin-left: 10px;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background-color: rgba(255, 255, 255, 0.05);
+            color: #a1a1aa;
+        }
+        .battery-high  { color: #10b981; border-color: rgba(16, 185, 129, 0.4); background-color: rgba(16, 185, 129, 0.1); }
+        .battery-mid   { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); background-color: rgba(245, 158, 11, 0.1); }
+        .battery-low   { color: #ef4444; border-color: rgba(239, 68, 68, 0.4);  background-color: rgba(239, 68, 68, 0.1);  }
         .charts-container {
             width: 100%;
             max-width: 1200px;
@@ -60,6 +75,23 @@
         canvas {
             width: 100% !important;
             max-height: 350px;
+        }
+        .metric-display {
+            margin-bottom: 12px;
+            line-height: 1;
+        }
+        #currentHrValue {
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: #ef4444;
+            text-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+            letter-spacing: -0.03em;
+        }
+        .metric-unit {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #a1a1aa;
+            vertical-align: middle;
         }
         .raw-feed-section {
             width: 100%;
@@ -105,9 +137,16 @@
 </head>
 <body>
     <h1>Live Telemetry</h1>
-    <div id="statusBadge" class="status-badge status-offline">iPhone Link: OFFLINE (Checking...)</div>
+    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:0;">
+        <div id="statusBadge" class="status-badge status-offline">iPhone Link: OFFLINE (Checking...)</div>
+        <div id="batteryBadge" class="battery-badge">🔋 --</div>
+    </div>
     <div class="charts-container">
         <div class="chart-box">
+            <div class="metric-display">
+                <span id="currentHrValue">--</span>
+                <span class="metric-unit">BPM</span>
+            </div>
             <canvas id="hrChart"></canvas>
         </div>
         <div class="chart-box">
@@ -234,6 +273,10 @@
                 const accelData = data.accelerometer.reverse();
 
                 // Update HR
+                if (hrData.length > 0) {
+                    const latestHr = hrData[hrData.length - 1].heart_rate;
+                    document.getElementById('currentHrValue').textContent = latestHr;
+                }
                 hrChart.data.labels = hrData.map(d => d.timestamp);
                 hrChart.data.datasets[0].data = hrData.map(d => d.heart_rate);
                 hrChart.update();
@@ -281,6 +324,7 @@
                 const data = await response.json();
                 
                 const badge = document.getElementById('statusBadge');
+                const battBadge = document.getElementById('batteryBadge');
                 if (data.connected) {
                     badge.className = 'status-badge status-live';
                     badge.textContent = 'iPhone Link: LIVE';
@@ -288,6 +332,17 @@
                     badge.className = 'status-badge status-offline';
                     const secText = data.last_seen_seconds_ago !== null ? data.last_seen_seconds_ago + ' sec ago' : 'Never seen';
                     badge.textContent = `iPhone Link: OFFLINE (Last seen ${secText})`;
+                }
+                // Battery badge
+                if (data.battery_level !== null && data.battery_level !== undefined) {
+                    const pct = data.battery_level;
+                    let icon = pct > 50 ? '🔋' : pct > 20 ? '🪫' : '🔴';
+                    let cls  = pct > 50 ? 'battery-high' : pct > 20 ? 'battery-mid' : 'battery-low';
+                    battBadge.className = `battery-badge ${cls}`;
+                    battBadge.textContent = `${icon} ${pct}%`;
+                } else {
+                    battBadge.className = 'battery-badge';
+                    battBadge.textContent = '🔋 --';
                 }
             } catch (error) {
                 console.error("Error fetching status:", error);

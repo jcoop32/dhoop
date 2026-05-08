@@ -79,6 +79,9 @@ class BLEPayload(BaseModel):
 class PingPayload(BaseModel):
     status: str = Field(..., description="Status string, e.g. 'connected'")
 
+class BatteryPayload(BaseModel):
+    battery_level: int = Field(..., ge=0, le=100, description="Battery percentage 0-100")
+
 class IngestResponse(BaseModel):
     stream_id: str = Field(..., description="Redis Stream entry ID assigned by XADD.")
     stream: str = Field(..., description="Name of the Redis Stream written to.")
@@ -131,6 +134,19 @@ async def ping(payload: PingPayload):
     await redis_client.set("iphone_last_seen", current_time)
     return {"status": "ok", "last_seen": current_time}
 
+@app.post(
+    "/ingest/battery",
+    status_code=status.HTTP_200_OK,
+    tags=["ingest"],
+    dependencies=[Depends(require_api_key)],
+)
+async def ingest_battery(payload: BatteryPayload):
+    """
+    Stores the latest Whoop battery level in Redis.
+    """
+    await redis_client.set("iphone_battery_level", payload.battery_level)
+    return {"status": "ok", "battery_level": payload.battery_level}
+
 # ---------------------------------------------------------------------------
 # Dashboard & Live API
 # ---------------------------------------------------------------------------
@@ -140,17 +156,20 @@ async def connection_status():
     Returns the live connection status based on the iphone_last_seen key.
     """
     last_seen_str = await redis_client.get("iphone_last_seen")
-    
+    battery_str   = await redis_client.get("iphone_battery_level")
+
+    battery_level = int(battery_str) if battery_str is not None else None
+
     if not last_seen_str:
-        return {"connected": False, "last_seen_seconds_ago": None}
-        
+        return {"connected": False, "last_seen_seconds_ago": None, "battery_level": battery_level}
+
     try:
         last_seen = int(last_seen_str)
         seconds_ago = int(time.time()) - last_seen
         connected = seconds_ago <= 5
-        return {"connected": connected, "last_seen_seconds_ago": seconds_ago}
+        return {"connected": connected, "last_seen_seconds_ago": seconds_ago, "battery_level": battery_level}
     except ValueError:
-        return {"connected": False, "last_seen_seconds_ago": None}
+        return {"connected": False, "last_seen_seconds_ago": None, "battery_level": battery_level}
 @app.get("/api/latest", tags=["dashboard"])
 async def get_latest_data():
     """
