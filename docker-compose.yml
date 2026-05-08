@@ -52,6 +52,23 @@ services:
       clickhouse:
         condition: service_healthy         # wait for ClickHouse to pass its healthcheck
 
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: whoop_worker
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379         # internal Docker network
+      REDIS_STREAM: whoop_raw_stream
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000                 # binary TCP — used by clickhouse-cpp
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
 volumes:
   redis_data:
   clickhouse_data:
