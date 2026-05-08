@@ -50,14 +50,14 @@ static std::vector<uint8_t> hexToBytes(const std::string& hex) {
 }
 
 // ── Frame layout constants ────────────────────────────────────────────────────
-static constexpr uint8_t kSyncBatchDataType = 0x05u;
-static constexpr size_t  kPacketTypeIndex   = 6u;
-static constexpr size_t  kHrIndex           = 21u;
+static constexpr uint8_t kHealthMonitorType = 0xFFu;
+static constexpr size_t  kPacketTypeIndex   = 3u;
+static constexpr size_t  kHrIndex           = 12u;
 static constexpr size_t  kAccelXIndex       = 40u;
 static constexpr size_t  kAccelYIndex       = 44u;
 static constexpr size_t  kAccelZIndex       = 48u;
-static constexpr size_t  kMinFrameForHr     = kHrIndex + 1u;          // 22
-static constexpr size_t  kMinFrameForAccel  = kAccelZIndex + 4u;      // 52
+static constexpr size_t  kMinFrameForHr     = kHrIndex + 1u;
+static constexpr size_t  kMinFrameForAccel  = kAccelZIndex + 4u;
 static constexpr size_t  kCrcLen            = 4u;
 
 } // anonymous namespace
@@ -89,9 +89,9 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     if (!result.crc_valid) return result;
 
     // ── Metric extraction: only for Health Monitor streams (0xFF) ────────────
-    if (bytes.size() > 12 && bytes[3] == 0xFF) {
-        // Heart rate: uint8_t at index 12
-        result.hr = HrRecord{ timestamp_ns, bytes[12] };
+    if (bytes.size() >= kMinFrameForHr && bytes[kPacketTypeIndex] == kHealthMonitorType) {
+        // Heart rate: uint8_t
+        result.hr = HrRecord{ timestamp_ns, bytes[kHrIndex] };
 
         // Accelerometer: three little-endian IEEE-754 floats at indices 40, 44, 48.
         // std::memcpy avoids strict-aliasing UB when type-punning raw bytes → float.
