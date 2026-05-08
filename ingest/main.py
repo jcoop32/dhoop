@@ -3,6 +3,8 @@ import time
 from contextlib import asynccontextmanager
 
 import httpx
+import numpy as np
+import pandas as pd
 import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI, HTTPException, Security, status
 from fastapi.responses import FileResponse
@@ -200,6 +202,118 @@ async def get_latest_data():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sleep", tags=["dashboard"])
+async def get_sleep_analysis():
+    """
+    Analyses the last 12 hours of accelerometer + HR data from ClickHouse
+    and returns estimated sleep onset, wake time, duration, and average HR.
+    """
+    # ── 1. Fetch raw data from ClickHouse ─────────────────────────────────────
+    accel_query = (
+        "SELECT timestamp, acc0 AS x, acc1 AS y, acc2 AS z "
+        "FROM dhoop.whoop_accelerometer "
+        "WHERE timestamp >= now() - INTERVAL 12 HOUR "
+        "ORDER BY timestamp ASC FORMAT JSON"
+    )
+    hr_query = (
+        "SELECT timestamp, hr "
+        "FROM dhoop.whoop_hr "
+        "WHERE timestamp >= now() - INTERVAL 12 HOUR "
+        "ORDER BY timestamp ASC FORMAT JSON"
+    )
+
+    try:
+        accel_resp = await http_client.post("/", params={"query": accel_query})
+        accel_resp.raise_for_status()
+        hr_resp = await http_client.post("/", params={"query": hr_query})
+        hr_resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ClickHouse fetch error: {e}")
+
+    accel_rows = accel_resp.json().get("data", [])
+    hr_rows    = hr_resp.json().get("data", [])
+
+    if len(accel_rows) < 180:  # need at least 15 min of data at 1 Hz
+        return {
+            "status": "insufficient_data",
+            "detail": f"Only {len(accel_rows)} accelerometer samples available (need ≥180).",
+            "sleep_onset": None,
+            "wake_time": None,
+            "total_sleep_duration_minutes": None,
+            "average_sleeping_hr": None,
+        }
+
+    # ── 2. Build Accel DataFrame + magnitude ──────────────────────────────────
+    accel_df = pd.DataFrame(accel_rows)
+    accel_df["timestamp"] = pd.to_datetime(accel_df["timestamp"], utc=True)
+    accel_df = accel_df.set_index("timestamp").sort_index()
+    accel_df[["x", "y", "z"]] = accel_df[["x", "y", "z"]].apply(pd.to_numeric, errors="coerce")
+    accel_df["magnitude"] = np.sqrt(
+        accel_df["x"] ** 2 + accel_df["y"] ** 2 + accel_df["z"] ** 2
+    )
+
+    # ── 3. 5-minute rolling variance of magnitude ─────────────────────────────
+    accel_df["variance"] = accel_df["magnitude"].rolling("5min").var()
+    accel_df = accel_df.dropna(subset=["variance"])
+
+    # ── 4. Sleep onset: first 15-consecutive-minute window below threshold ────
+    VARIANCE_THRESHOLD = 0.01
+    MIN_SLEEP_WINDOW   = pd.Timedelta(minutes=15)
+
+    sleep_onset  = None
+    wake_time    = None
+    asleep_since = None
+
+    for ts, row in accel_df.iterrows():
+        if row["variance"] < VARIANCE_THRESHOLD:
+            if asleep_since is None:
+                asleep_since = ts
+            elif (ts - asleep_since) >= MIN_SLEEP_WINDOW and sleep_onset is None:
+                sleep_onset = asleep_since
+        else:
+            if sleep_onset is not None and wake_time is None:
+                wake_time = ts
+                break
+            asleep_since = None  # reset — movement restarted before 15-min threshold
+
+    if sleep_onset is None:
+        return {
+            "status": "no_sleep_detected",
+            "detail": "No sustained low-movement window found in the last 12 hours.",
+            "sleep_onset": None,
+            "wake_time": None,
+            "total_sleep_duration_minutes": None,
+            "average_sleeping_hr": None,
+            "data_points_analyzed": len(accel_df),
+        }
+
+    # If still asleep at end of window, wake_time = last sample
+    if wake_time is None:
+        wake_time = accel_df.index[-1]
+
+    duration_minutes = (wake_time - sleep_onset).total_seconds() / 60
+
+    # ── 5. Average sleeping HR within the detected sleep window ───────────────
+    avg_sleeping_hr = None
+    if hr_rows:
+        hr_df = pd.DataFrame(hr_rows)
+        hr_df["timestamp"] = pd.to_datetime(hr_df["timestamp"], utc=True)
+        hr_df["hr"] = pd.to_numeric(hr_df["hr"], errors="coerce")
+        sleeping_hr = hr_df[
+            (hr_df["timestamp"] >= sleep_onset) & (hr_df["timestamp"] <= wake_time)
+        ]["hr"]
+        if not sleeping_hr.empty:
+            avg_sleeping_hr = round(float(sleeping_hr.mean()), 1)
+
+    return {
+        "status": "ok",
+        "sleep_onset": sleep_onset.isoformat(),
+        "wake_time": wake_time.isoformat(),
+        "total_sleep_duration_minutes": round(duration_minutes, 1),
+        "average_sleeping_hr": avg_sleeping_hr,
+        "data_points_analyzed": len(accel_df),
+    }
 
 @app.get("/dashboard", response_class=FileResponse, tags=["dashboard"])
 async def dashboard():
