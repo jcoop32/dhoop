@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whoop BLE Live Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background-color: #09090b; /* Zinc dark palette from previous NBA watcher projects */
+            color: #ffffff;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            font-weight: 700;
+            margin-bottom: 30px;
+            color: #fafafa;
+            letter-spacing: -0.05em;
+        }
+        .charts-container {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+        .chart-box {
+            background: rgba(24, 24, 27, 0.7);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        canvas {
+            width: 100% !important;
+            max-height: 350px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Telemetry</h1>
+    <div class="charts-container">
+        <div class="chart-box">
+            <canvas id="hrChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <canvas id="accelChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Set default Chart.js text color for dark theme
+        Chart.defaults.color = '#a1a1aa';
+        Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
+        Chart.defaults.font.family = "'Inter', sans-serif";
+
+        // Initialize Heart Rate Chart
+        const hrCtx = document.getElementById('hrChart').getContext('2d');
+        const hrChart = new Chart(hrCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Heart Rate (bpm)',
+                    data: [],
+                    borderColor: '#ef4444', // Red-500
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 }, // Disable animation for live scrolling effect
+                scales: {
+                    x: { display: false },
+                    y: {
+                        min: 40,
+                        max: 200,
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#fafafa', font: { weight: 600 } } }
+                }
+            }
+        });
+
+        // Initialize Accelerometer Chart
+        const accelCtx = document.getElementById('accelChart').getContext('2d');
+        const accelChart = new Chart(accelCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'X Axis',
+                        data: [],
+                        borderColor: '#3b82f6', // Blue-500
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Y Axis',
+                        data: [],
+                        borderColor: '#10b981', // Emerald-500
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Z Axis',
+                        data: [],
+                        borderColor: '#f59e0b', // Amber-500
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                scales: {
+                    x: { display: false },
+                    y: {
+                        min: -2.5,
+                        max: 2.5,
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#fafafa', font: { weight: 600 } } }
+                }
+            }
+        });
+
+        async function updateCharts() {
+            try {
+                const response = await fetch('/api/latest');
+                const data = await response.json();
+                
+                // Reverse the descending arrays back into chronological (ASC) order for left-to-right rendering
+                const hrData = data.hr.reverse();
+                const accelData = data.accelerometer.reverse();
+
+                // Update HR
+                hrChart.data.labels = hrData.map(d => d.timestamp);
+                hrChart.data.datasets[0].data = hrData.map(d => d.heart_rate);
+                hrChart.update();
+
+                // Update Accelerometer
+                accelChart.data.labels = accelData.map(d => d.timestamp);
+                accelChart.data.datasets[0].data = accelData.map(d => d.accel_x);
+                accelChart.data.datasets[1].data = accelData.map(d => d.accel_y);
+                accelChart.data.datasets[2].data = accelData.map(d => d.accel_z);
+                accelChart.update();
+                
+            } catch (error) {
+                console.error("Error fetching latest data:", error);
+            }
+        }
+
+        // Fetch every 500ms
+        setInterval(updateCharts, 500);
+        updateCharts(); // Initial fetch
+    </script>
+</body>
+</html>
