@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         ca-certificates \
         libssl-dev \
+        libhiredis-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

@@ -6,13 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
-# ── hiredis (required by redis-plus-plus) ─────────────────────────────────────
-FetchContent_Declare(
-    hiredis
-    GIT_REPOSITORY https://github.com/redis/hiredis.git
-    GIT_TAG        v1.2.0
+# ── hiredis — installed via apt in the builder stage ─────────────────────────
+# redis-plus-plus runs find_package(hiredis) internally. Pointing it at the
+# system-installed headers and the static archive avoids the FetchContent
+# sibling-discovery problem and keeps the runtime image dependency-free.
+set(HIREDIS_HEADER "/usr/include" CACHE PATH "hiredis include dir" FORCE)
+find_library(HIREDIS_LIB
+    NAMES libhiredis.a hiredis          # prefer static archive
+    PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+    REQUIRED
 )
-FetchContent_MakeAvailable(hiredis)
+message(STATUS "hiredis library: ${HIREDIS_LIB}")
 
 # ── redis-plus-plus ───────────────────────────────────────────────────────────
 FetchContent_Declare(
@@ -38,8 +42,8 @@ FetchContent_MakeAvailable(clickhouse_cpp)
 add_executable(whoop_worker main.cpp)
 
 target_link_libraries(whoop_worker PRIVATE
-    redis++
-    hiredis
+    redis++_static          # static variant — no libredis++.so needed at runtime
+    ${HIREDIS_LIB}
     clickhouse-cpp-lib
 )
 
