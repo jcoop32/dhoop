@@ -13,10 +13,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
-# Copy build definition first for better layer caching.
-# A changed CMakeLists.txt re-fetches deps; a changed main.cpp only recompiles.
-COPY CMakeLists.txt .
-COPY main.cpp       .
+# Layer 1: build definition + headers.
+# Only changing CMakeLists.txt or a header busts the dep-fetch cache.
+COPY CMakeLists.txt  .
+COPY WhoopParser.h   .
+COPY Database.h      .
+
+# Layer 2: translation units.
+# Editing any .cpp only invalidates the compile step, not the FetchContent fetch.
+COPY main.cpp        .
+COPY WhoopParser.cpp .
+COPY Database.cpp    .
 
 RUN cmake -B build \
         -DCMAKE_BUILD_TYPE=Release \
