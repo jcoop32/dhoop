@@ -3,7 +3,7 @@
 -- Engine: ReplacingMergeTree — deduplicates on full ORDER BY key.
 -- All timestamps are nanosecond-precision UTC (DateTime64(9)).
 -- ============================================================
-
+USE dhoop;
 -- Raw BLE hex payloads from the iOS bridge
 CREATE TABLE IF NOT EXISTS whoop_raw_data
 (
