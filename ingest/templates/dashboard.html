@@ -61,6 +61,46 @@
             width: 100% !important;
             max-height: 350px;
         }
+        .raw-feed-section {
+            width: 100%;
+            max-width: 1200px;
+            margin-top: 30px;
+        }
+        .raw-feed-container {
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 8px;
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+        }
+        table.raw-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        table.raw-table th, table.raw-table td {
+            text-align: left;
+            padding: 6px 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        table.raw-table th {
+            color: #a1a1aa;
+            font-weight: 600;
+            position: sticky;
+            top: -16px; /* Offset padding */
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 10;
+        }
+        table.raw-table td {
+            color: #10b981; /* terminal green */
+        }
+        table.raw-table td.ts-col {
+            color: #60a5fa; /* timestamp blue */
+            white-space: nowrap;
+            width: 200px;
+        }
     </style>
 </head>
 <body>
@@ -72,6 +112,23 @@
         </div>
         <div class="chart-box">
             <canvas id="accelChart"></canvas>
+        </div>
+    </div>
+    
+    <div class="raw-feed-section">
+        <h2 style="font-weight: 600; margin-bottom: 15px; color: #fafafa;">Live Raw Data Feed</h2>
+        <div class="raw-feed-container">
+            <table class="raw-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp (Local)</th>
+                        <th>Raw Hex Payload</th>
+                    </tr>
+                </thead>
+                <tbody id="rawFeedBody">
+                    <!-- Rows injected by JS -->
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -187,6 +244,27 @@
                 accelChart.data.datasets[1].data = accelData.map(d => d.accel_y);
                 accelChart.data.datasets[2].data = accelData.map(d => d.accel_z);
                 accelChart.update();
+
+                // Update Raw Feed
+                const rawBody = document.getElementById('rawFeedBody');
+                rawBody.innerHTML = ''; // Clear current rows
+                const rawData = data.raw || [];
+                // rawData is descending from API, so no need to reverse if we want newest on top
+                rawData.forEach(record => {
+                    const row = document.createElement('tr');
+                    const tsTd = document.createElement('td');
+                    tsTd.className = 'ts-col';
+                    // Parse timestamp to local readable string
+                    const localDate = new Date(record.timestamp + 'Z'); // Add Z to specify UTC
+                    tsTd.textContent = localDate.toLocaleTimeString() + '.' + String(localDate.getMilliseconds()).padStart(3, '0');
+                    
+                    const hexTd = document.createElement('td');
+                    hexTd.textContent = record.hex_data;
+                    
+                    row.appendChild(tsTd);
+                    row.appendChild(hexTd);
+                    rawBody.appendChild(row);
+                });
                 
             } catch (error) {
                 console.error("Error fetching latest data:", error);
