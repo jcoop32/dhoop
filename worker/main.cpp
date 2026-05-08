@@ -121,19 +121,22 @@ int main() {
                 try {
                     auto r = whoop::parse(hex_data, ts_ns);
 
+                    // Always insert raw data to allow dashboard debugging
+                    raw_batch.push_back({ r.timestamp_ns, r.hex_data });
+
                     if (!r.crc_valid) {
                         std::cerr << "[worker] CRC FAIL " << msg_id << " — dead-lettering\n";
                         ack_ids.push_back(msg_id);
                         continue;
                     }
 
-                    raw_batch.push_back({ r.timestamp_ns, r.hex_data });
                     if (r.hr)    hr_batch.push_back(*r.hr);
                     if (r.accel) accel_batch.push_back(*r.accel);
 
                     ack_ids.push_back(msg_id);
                 } catch (const std::exception& ex) {
                     std::cerr << "[worker] PARSE " << msg_id << " " << ex.what() << " — discarding\n";
+                    raw_batch.push_back({ ts_ns, hex_data });
                     ack_ids.push_back(msg_id);
                 }
             }
