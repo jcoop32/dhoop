@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -176,11 +177,13 @@ int main() {
 
     std::cout << "[worker] Listening on '" << stream_name << "' ...\n";
 
-    // ── Consumer loop ─────────────────────────────────────────────────────────
-    using StreamMap = std::unordered_map<
-        std::string,
-        std::vector<std::pair<std::string, sw::redis::OptionalStringPairs>>
-    >;
+    // redis-plus-plus stream entry type (1.3.x):
+    //   stream_name → [ (msg_id, optional<[ (field, value) ]>) ]
+    // The optional is null only for XPENDING entries whose data has been deleted.
+    using Fields    = std::vector<std::pair<std::string, std::string>>;
+    using Entry     = std::pair<std::string, std::optional<Fields>>;
+    using StreamMap = std::unordered_map<std::string, std::vector<Entry>>;
+
 
     while (true) {
         try {
