@@ -146,9 +146,12 @@ static std::string getenv_or(const char* key, const char* fallback) {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 int main() {
-    const std::string redis_url   = getenv_or("REDIS_URL",        "redis://redis:6379");
-    const std::string ch_host     = getenv_or("CLICKHOUSE_HOST",  "clickhouse");
-    const int         ch_port     = std::stoi(getenv_or("CLICKHOUSE_PORT", "9000"));
+    const std::string redis_url = getenv_or("REDIS_URL",          "redis://redis:6379");
+    const std::string ch_host   = getenv_or("CLICKHOUSE_HOST",    "clickhouse");
+    const int         ch_port   = std::stoi(getenv_or("CLICKHOUSE_PORT", "9000"));
+    const std::string ch_user   = getenv_or("CLICKHOUSE_USER",    "dhoop_worker");
+    const std::string ch_pass   = getenv_or("CLICKHOUSE_PASSWORD","");
+    const std::string ch_db     = getenv_or("CLICKHOUSE_DB",      "dhoop");
     const std::string stream_name = getenv_or("REDIS_STREAM",     "whoop_raw_stream");
 
     const std::string GROUP    = "whoop_workers";
@@ -162,7 +165,12 @@ int main() {
 
     std::cout << "[worker] ClickHouse → " << ch_host << ":" << ch_port << "\n";
     clickhouse::Client ch(
-        clickhouse::ClientOptions().SetHost(ch_host).SetPort(ch_port)
+        clickhouse::ClientOptions()
+            .SetHost(ch_host)
+            .SetPort(ch_port)
+            .SetUser(ch_user)
+            .SetPassword(ch_pass)
+            .SetDefaultDatabase(ch_db)
     );
 
     // ── Bootstrap consumer group ──────────────────────────────────────────────

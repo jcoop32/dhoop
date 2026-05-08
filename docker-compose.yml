@@ -21,6 +21,10 @@ services:
     ports:
       - "9000:9000"    # native TCP client
       - "8123:8123"    # HTTP interface
+    environment:
+      CLICKHOUSE_DB:       ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER:     ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     ulimits:
       nofile:
         soft: 262144
@@ -59,10 +63,13 @@ services:
     container_name: whoop_worker
     restart: unless-stopped
     environment:
-      REDIS_URL: redis://redis:6379         # internal Docker network
-      REDIS_STREAM: whoop_raw_stream
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_PORT: 9000                 # binary TCP — used by clickhouse-cpp
+      REDIS_URL:           redis://redis:6379   # internal Docker network
+      REDIS_STREAM:        whoop_raw_stream
+      CLICKHOUSE_HOST:     clickhouse
+      CLICKHOUSE_PORT:     9000                 # binary TCP — used by clickhouse-cpp
+      CLICKHOUSE_DB:       ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER:     ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
