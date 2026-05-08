@@ -39,7 +39,11 @@ set(BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(clickhouse_cpp)
 
 # ── Executable ────────────────────────────────────────────────────────────────
-add_executable(whoop_worker main.cpp)
+add_executable(whoop_worker
+    main.cpp
+    WhoopParser.cpp
+    Database.cpp
+)
 
 target_link_libraries(whoop_worker PRIVATE
     redis++_static          # static variant — no libredis++.so needed at runtime
