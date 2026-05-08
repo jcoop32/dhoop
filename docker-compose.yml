@@ -14,6 +14,26 @@ services:
     volumes:
       - redis_data:/data      # persist stream data across restarts
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: whoop_clickhouse
+    restart: unless-stopped
+    ports:
+      - "9000:9000"    # native TCP client
+      - "8123:8123"    # HTTP interface
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse_init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   ingest:
     build:
       context: ./ingest
@@ -23,11 +43,15 @@ services:
     ports:
       - "100.127.237.13:9001:9001"  # Tailscale only — not reachable from public internet
     environment:
-      REDIS_URL: redis://redis:6379   # internal Docker network — always 6379 here
-      API_KEY: ${API_KEY}             # sourced from .env
+      REDIS_URL: redis://redis:6379        # internal Docker network — always 6379 here
+      CLICKHOUSE_URL: http://clickhouse:8123  # internal HTTP interface
+      API_KEY: ${API_KEY}                  # sourced from .env
     depends_on:
       redis:
-        condition: service_healthy    # wait for Redis to pass its healthcheck
+        condition: service_healthy         # wait for Redis to pass its healthcheck
+      clickhouse:
+        condition: service_healthy         # wait for ClickHouse to pass its healthcheck
 
 volumes:
   redis_data:
+  clickhouse_data:
