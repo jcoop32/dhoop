@@ -50,15 +50,21 @@ static std::vector<uint8_t> hexToBytes(const std::string& hex) {
 }
 
 // ── Frame layout constants ────────────────────────────────────────────────────
-static constexpr uint8_t kHealthMonitorType = 0xFFu;
-static constexpr size_t  kPacketTypeIndex   = 3u;
-static constexpr size_t  kHrIndex           = 12u;
-static constexpr size_t  kAccelXIndex       = 40u;
-static constexpr size_t  kAccelYIndex       = 44u;
-static constexpr size_t  kAccelZIndex       = 48u;
-static constexpr size_t  kMinFrameForHr     = kHrIndex + 1u;
-static constexpr size_t  kMinFrameForAccel  = kAccelZIndex + 4u;
-static constexpr size_t  kCrcLen            = 4u;
+// Health Monitor packet (0xFF) — 29-byte live stream
+static constexpr uint8_t kHealthMonitorType  = 0xFFu;
+static constexpr size_t  kHMTypeIndex        = 3u;
+static constexpr size_t  kHMHrIndex          = 12u;
+
+// SyncBatchData packet (0x05) — 56-byte historic batch
+static constexpr uint8_t kSyncBatchDataType  = 0x05u;
+static constexpr size_t  kSBTypeIndex        = 6u;
+static constexpr size_t  kSBHrIndex          = 21u;
+static constexpr size_t  kSBAccelXIndex      = 40u;
+static constexpr size_t  kSBAccelYIndex      = 44u;
+static constexpr size_t  kSBAccelZIndex      = 48u;
+static constexpr size_t  kSBMinFrame         = kSBAccelZIndex + sizeof(float); // 52
+
+static constexpr size_t  kCrcLen             = 4u;
 
 } // anonymous namespace
 
@@ -89,22 +95,19 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     // CRC bypass — extract metrics regardless of validation result
     // if (!result.crc_valid) return result;
 
-    // ── Metric extraction: only for Health Monitor streams (0xFF) ────────────
-    if (bytes.size() >= kMinFrameForHr && bytes[kPacketTypeIndex] == kHealthMonitorType) {
-        // Heart rate: uint8_t
-        result.hr = HrRecord{ timestamp_ns, bytes[kHrIndex] };
-
-        // Accelerometer: three little-endian IEEE-754 floats at indices 40, 44, 48.
-        // std::memcpy avoids strict-aliasing UB when type-punning raw bytes → float.
-        /*
-        if (bytes.size() >= kMinFrameForAccel) {
-            float x = 0.f, y = 0.f, z = 0.f;
-            std::memcpy(&x, bytes.data() + kAccelXIndex, sizeof(float));
-            std::memcpy(&y, bytes.data() + kAccelYIndex, sizeof(float));
-            std::memcpy(&z, bytes.data() + kAccelZIndex, sizeof(float));
-            result.accel = AccelRecord{ timestamp_ns, x, y, z };
-        }
-        */
+    // ── Dual-branch metric extraction ─────────────────────────────────────────
+    // Branch A: Health Monitor stream — 0xFF at byte[3], min 13 bytes
+    if (bytes.size() > 12 && bytes[kHMTypeIndex] == kHealthMonitorType) {
+        result.hr = HrRecord{ timestamp_ns, bytes[kHMHrIndex] };
+    }
+    // Branch B: SyncBatchData — 0x05 at byte[6], min 52 bytes for full accel block
+    else if (bytes.size() >= kSBMinFrame && bytes[kSBTypeIndex] == kSyncBatchDataType) {
+        result.hr = HrRecord{ timestamp_ns, bytes[kSBHrIndex] };
+        float x = 0.f, y = 0.f, z = 0.f;
+        std::memcpy(&x, bytes.data() + kSBAccelXIndex, sizeof(float));
+        std::memcpy(&y, bytes.data() + kSBAccelYIndex, sizeof(float));
+        std::memcpy(&z, bytes.data() + kSBAccelZIndex, sizeof(float));
+        result.accel = AccelRecord{ timestamp_ns, x, y, z };
     }
 
     return result;
