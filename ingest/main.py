@@ -157,9 +157,9 @@ async def get_latest_data():
     Fetches the latest 50 rows from whoop_hr and whoop_accelerometer 
     from ClickHouse via HTTP interface.
     """
-    hr_query = "SELECT timestamp, hr AS heart_rate FROM whoop_hr ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
-    accel_query = "SELECT timestamp, acc0 AS accel_x, acc1 AS accel_y, acc2 AS accel_z FROM whoop_accelerometer ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
-    raw_query = "SELECT timestamp, data AS hex_data FROM whoop_raw_data ORDER BY timestamp DESC LIMIT 20 FORMAT JSON"
+    hr_query = "SELECT timestamp, hr AS heart_rate FROM dhoop.whoop_hr ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
+    accel_query = "SELECT timestamp, acc0 AS accel_x, acc1 AS accel_y, acc2 AS accel_z FROM dhoop.whoop_accelerometer ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
+    raw_query = "SELECT timestamp, data AS hex_data FROM dhoop.whoop_raw_data ORDER BY timestamp DESC LIMIT 20 FORMAT JSON"
     
     try:
         hr_resp = await http_client.post("/", params={"query": hr_query})
