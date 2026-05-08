@@ -108,8 +108,8 @@ int main() {
                 uint64_t    ts_ns = 0;
 
                 for (const auto& [k, v] : *opt_fields) {
-                    if (k == "data" || k == "hex") hex_data = v;
-                    else if (k == "ts")            ts_ns    = std::stoull(v);
+                    if (k == "hex_payload") hex_data = v;
+                    else if (k == "timestamp" || k == "ts") ts_ns = std::stoull(v);
                 }
 
                 if (hex_data.empty()) {

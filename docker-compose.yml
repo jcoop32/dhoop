@@ -49,6 +49,9 @@ services:
     environment:
       REDIS_URL: redis://redis:6379        # internal Docker network — always 6379 here
       CLICKHOUSE_URL: http://clickhouse:8123  # internal HTTP interface
+      CLICKHOUSE_DB:       ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER:     ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       API_KEY: ${API_KEY}                  # sourced from .env
     depends_on:
       redis:

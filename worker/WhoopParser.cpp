@@ -88,22 +88,22 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
 
     if (!result.crc_valid) return result;
 
-    // ── Metric extraction: only for SyncBatchData packets ────────────────────
-    if (bytes.size() <= kPacketTypeIndex || bytes[kPacketTypeIndex] != kSyncBatchDataType)
-        return result;
+    // ── Metric extraction: only for Health Monitor streams (0xFF) ────────────
+    if (bytes.size() > 12 && bytes[3] == 0xFF) {
+        // Heart rate: uint8_t at index 12
+        result.hr = HrRecord{ timestamp_ns, bytes[12] };
 
-    // Heart rate: uint8_t at index 21
-    if (bytes.size() >= kMinFrameForHr)
-        result.hr = HrRecord{ timestamp_ns, bytes[kHrIndex] };
-
-    // Accelerometer: three little-endian IEEE-754 floats at indices 40, 44, 48.
-    // std::memcpy avoids strict-aliasing UB when type-punning raw bytes → float.
-    if (bytes.size() >= kMinFrameForAccel) {
-        float x = 0.f, y = 0.f, z = 0.f;
-        std::memcpy(&x, bytes.data() + kAccelXIndex, sizeof(float));
-        std::memcpy(&y, bytes.data() + kAccelYIndex, sizeof(float));
-        std::memcpy(&z, bytes.data() + kAccelZIndex, sizeof(float));
-        result.accel = AccelRecord{ timestamp_ns, x, y, z };
+        // Accelerometer: three little-endian IEEE-754 floats at indices 40, 44, 48.
+        // std::memcpy avoids strict-aliasing UB when type-punning raw bytes → float.
+        /*
+        if (bytes.size() >= kMinFrameForAccel) {
+            float x = 0.f, y = 0.f, z = 0.f;
+            std::memcpy(&x, bytes.data() + kAccelXIndex, sizeof(float));
+            std::memcpy(&y, bytes.data() + kAccelYIndex, sizeof(float));
+            std::memcpy(&z, bytes.data() + kAccelZIndex, sizeof(float));
+            result.accel = AccelRecord{ timestamp_ns, x, y, z };
+        }
+        */
     }
 
     return result;

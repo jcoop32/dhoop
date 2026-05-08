@@ -16,6 +16,8 @@ API_KEY: str = os.environ.get("API_KEY", "changeme")
 STREAM_NAME: str = "whoop_raw_stream"
 STREAM_MAXLEN: int = 100_000  # approximate trim (~) to keep Redis memory bounded
 CLICKHOUSE_URL: str = os.environ.get("CLICKHOUSE_URL", "http://clickhouse:8123")
+CLICKHOUSE_USER: str = os.environ.get("CLICKHOUSE_USER", "default")
+CLICKHOUSE_PASSWORD: str = os.environ.get("CLICKHOUSE_PASSWORD", "")
 
 # ---------------------------------------------------------------------------
 # Auth
@@ -43,7 +45,10 @@ async def lifespan(app: FastAPI):
     await redis_client.ping()
     print(f"[startup] Connected to Redis at {REDIS_URL}")
     
-    http_client = httpx.AsyncClient(base_url=CLICKHOUSE_URL)
+    http_client = httpx.AsyncClient(
+        base_url=CLICKHOUSE_URL,
+        auth=(CLICKHOUSE_USER, CLICKHOUSE_PASSWORD)
+    )
     print(f"[startup] HTTP Client initialized for ClickHouse at {CLICKHOUSE_URL}")
     
     yield
@@ -118,11 +123,11 @@ async def get_latest_data():
     accel_query = "SELECT timestamp, accel_x, accel_y, accel_z FROM whoop_accelerometer ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
     
     try:
-        hr_resp = await http_client.get("/", params={"query": hr_query})
+        hr_resp = await http_client.post("/", params={"query": hr_query})
         hr_resp.raise_for_status()
         hr_data = hr_resp.json().get("data", [])
         
-        accel_resp = await http_client.get("/", params={"query": accel_query})
+        accel_resp = await http_client.post("/", params={"query": accel_query})
         accel_resp.raise_for_status()
         accel_data = accel_resp.json().get("data", [])
         
