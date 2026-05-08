@@ -125,9 +125,7 @@ int main() {
                     raw_batch.push_back({ r.timestamp_ns, r.hex_data });
 
                     if (!r.crc_valid) {
-                        std::cerr << "[worker] CRC FAIL " << msg_id << " — dead-lettering\n";
-                        ack_ids.push_back(msg_id);
-                        continue;
+                        std::cerr << "[worker] CRC FAIL " << msg_id << " — extracting metrics anyway\n";
                     }
 
                     if (r.hr)    hr_batch.push_back(*r.hr);

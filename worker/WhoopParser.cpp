@@ -86,7 +86,8 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     result.timestamp_ns = timestamp_ns;
     result.hex_data     = hex_string;
 
-    if (!result.crc_valid) return result;
+    // CRC bypass — extract metrics regardless of validation result
+    // if (!result.crc_valid) return result;
 
     // ── Metric extraction: only for Health Monitor streams (0xFF) ────────────
     if (bytes.size() >= kMinFrameForHr && bytes[kPacketTypeIndex] == kHealthMonitorType) {
