@@ -190,9 +190,9 @@ int main() {
             StreamMap result;
             redis.xreadgroup(
                 GROUP, CONSUMER,
-                stream_name, ">",      // ">" = only undelivered messages
-                BATCH,
-                std::chrono::milliseconds(BLOCK_MS),
+                stream_name, ">",                        // ">" = only undelivered messages
+                std::chrono::milliseconds(BLOCK_MS),     // block timeout first
+                BATCH,                                   // then max count
                 std::inserter(result, result.end())
             );
 
