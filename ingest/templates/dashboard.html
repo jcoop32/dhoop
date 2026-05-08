@@ -18,9 +18,29 @@
         }
         h1 {
             font-weight: 700;
-            margin-bottom: 30px;
+            margin-bottom: 15px;
             color: #fafafa;
             letter-spacing: -0.05em;
+        }
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 9999px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+        .status-live {
+            background-color: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+        }
+        .status-offline {
+            background-color: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.5);
         }
         .charts-container {
             width: 100%;
@@ -45,6 +65,7 @@
 </head>
 <body>
     <h1>Live Telemetry</h1>
+    <div id="statusBadge" class="status-badge status-offline">iPhone Link: OFFLINE (Checking...)</div>
     <div class="charts-container">
         <div class="chart-box">
             <canvas id="hrChart"></canvas>
@@ -175,6 +196,31 @@
         // Fetch every 500ms
         setInterval(updateCharts, 500);
         updateCharts(); // Initial fetch
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                const badge = document.getElementById('statusBadge');
+                if (data.connected) {
+                    badge.className = 'status-badge status-live';
+                    badge.textContent = 'iPhone Link: LIVE';
+                } else {
+                    badge.className = 'status-badge status-offline';
+                    const secText = data.last_seen_seconds_ago !== null ? data.last_seen_seconds_ago + ' sec ago' : 'Never seen';
+                    badge.textContent = `iPhone Link: OFFLINE (Last seen ${secText})`;
+                }
+            } catch (error) {
+                console.error("Error fetching status:", error);
+                const badge = document.getElementById('statusBadge');
+                badge.className = 'status-badge status-offline';
+                badge.textContent = 'iPhone Link: OFFLINE (Error connecting)';
+            }
+        }
+
+        setInterval(updateStatus, 1000);
+        updateStatus(); // Initial fetch
     </script>
 </body>
 </html>

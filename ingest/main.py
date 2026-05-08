@@ -1,4 +1,5 @@
 import os
+import time
 from contextlib import asynccontextmanager
 
 import httpx
@@ -75,6 +76,9 @@ class BLEPayload(BaseModel):
     timestamp: str = Field(..., description="ISO-8601 or Unix epoch timestamp from the BLE capture device.")
     hex_payload: str = Field(..., description="Raw BLE advertisement or characteristic data as a hex string.")
 
+class PingPayload(BaseModel):
+    status: str = Field(..., description="Status string, e.g. 'connected'")
+
 class IngestResponse(BaseModel):
     stream_id: str = Field(..., description="Redis Stream entry ID assigned by XADD.")
     stream: str = Field(..., description="Name of the Redis Stream written to.")
@@ -99,6 +103,9 @@ async def ingest(payload: BLEPayload):
     Accept a raw BLE hex payload and append it to the Redis Stream
     ``whoop_raw_stream`` using XADD with an approximate MAXLEN cap.
     """
+    current_time = int(time.time())
+    await redis_client.set("iphone_last_seen", current_time)
+    
     entry_id: str = await redis_client.xadd(
         name=STREAM_NAME,
         fields={
@@ -110,9 +117,40 @@ async def ingest(payload: BLEPayload):
     )
     return IngestResponse(stream_id=entry_id, stream=STREAM_NAME)
 
+@app.post(
+    "/ping",
+    status_code=status.HTTP_200_OK,
+    tags=["ingest"],
+    dependencies=[Depends(require_api_key)],
+)
+async def ping(payload: PingPayload):
+    """
+    Explicit heartbeat endpoint to update the connection status.
+    """
+    current_time = int(time.time())
+    await redis_client.set("iphone_last_seen", current_time)
+    return {"status": "ok", "last_seen": current_time}
+
 # ---------------------------------------------------------------------------
 # Dashboard & Live API
 # ---------------------------------------------------------------------------
+@app.get("/api/status", tags=["dashboard"])
+async def connection_status():
+    """
+    Returns the live connection status based on the iphone_last_seen key.
+    """
+    last_seen_str = await redis_client.get("iphone_last_seen")
+    
+    if not last_seen_str:
+        return {"connected": False, "last_seen_seconds_ago": None}
+        
+    try:
+        last_seen = int(last_seen_str)
+        seconds_ago = int(time.time()) - last_seen
+        connected = seconds_ago <= 5
+        return {"connected": connected, "last_seen_seconds_ago": seconds_ago}
+    except ValueError:
+        return {"connected": False, "last_seen_seconds_ago": None}
 @app.get("/api/latest", tags=["dashboard"])
 async def get_latest_data():
     """
