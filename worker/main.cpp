@@ -20,7 +20,7 @@
 #include <sw/redis++/redis++.h>
 
 #include <clickhouse/client.h>
-#include <clickhouse/columns/datetime64.h>
+#include <clickhouse/columns/date.h>      // ColumnDateTime64 lives here in clickhouse-cpp
 #include <clickhouse/columns/string.h>
 
 // ── CRC-32 engine ─────────────────────────────────────────────────────────────
