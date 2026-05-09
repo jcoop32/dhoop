@@ -53,37 +53,49 @@ static std::vector<uint8_t> hexToBytes(const std::string& hex) {
 }
 
 // ── Gen4 frame layout constants ───────────────────────────────────────────────
+// iOS sends COMPLETE Gen4 frames off the wire, including the 4-byte header:
+//   [0]    0xAA  — sync
+//   [1..2] uint16 LE body length
+//   [3]    CRC-8(len)
+//   [4]    0x23  — inner frame marker
+//   [5]    seq   — sequence number
+//   [6]    cmd   — packet type discriminator  ← kTypeIndex
+//   [7..]  payload
+//   [last-3..last] CRC-32 LE
 
-// Packet type discriminator: byte[4]
+// Packet type discriminator: byte[6]
 static constexpr uint8_t kTypeEvent        = 0x30u;
 static constexpr uint8_t kTypeRealtimeData = 0x28u;
 static constexpr uint8_t kTypeRawRealtime  = 0x2Bu;  // reserved / no extraction
 
-// Shared indices
-static constexpr size_t kTypeIndex  = 4u;   // packet type byte
-static constexpr size_t kRecTypeIdx = 5u;   // record sub-type (R10 / R21)
+// Shared indices — all +6 to skip 4-byte header + 0x23 marker + seq
+static constexpr size_t kTypeIndex  = 6u;   // packet type byte  (was 4)
+static constexpr size_t kRecTypeIdx = 7u;   // record sub-type   (was 5)
 
 // ── 0x30 Event (Skin Temperature) ────────────────────────────────────────────
-static constexpr size_t   kEvtEventTypeIdx = 6u;    // uint16 LE event type
+// Layout inside the Gen4 body (after the 6-byte prefix):
+//   byte[8..9]   uint16 LE event type
+//   byte[18..19] int16  LE raw temperature (units = 0.1 °C)
+static constexpr size_t   kEvtEventTypeIdx = 8u;    // uint16 LE event type  (was 6)
 static constexpr uint16_t kEvtTempType     = 17u;   // Temperature event ID
-static constexpr size_t   kEvtTempIdx      = 16u;   // int16 LE raw value
-static constexpr size_t   kEvtMinFrame     = kEvtTempIdx + 2u;  // 18 bytes
+static constexpr size_t   kEvtTempIdx      = 18u;   // int16 LE raw value   (was 16)
+static constexpr size_t   kEvtMinFrame     = kEvtTempIdx + 2u;  // 20 bytes
 
 // ── 0x28 R10 (HR + IMU) ──────────────────────────────────────────────────────
+// All R10 offsets shift by +2 vs. previous values to account for the extra
+// 0x23 + seq bytes at the start of the Gen4 body.
 static constexpr uint8_t kRecTypeR10    = 10u;
-static constexpr size_t  kR10HrIndex   = 21u;             // uint8 HR byte
-static constexpr size_t  kR10AccelXBase = 4u + 85u;       // 100 × int16 LE
-static constexpr size_t  kR10AccelYBase = 4u + 285u;      // 100 × int16 LE
-static constexpr size_t  kR10AccelZBase = 4u + 485u;      // 100 × int16 LE
-// Minimum bytes needed for the full Z array (last sample ends at base + 200)
-static constexpr size_t  kR10MinFrame  = 4u + 485u + 200u;  // 889 bytes
+static constexpr size_t  kR10HrIndex   = 23u;             // uint8 HR byte        (was 21)
+static constexpr size_t  kR10AccelXBase = 6u + 85u;       // 100 × int16 LE       (was 4+85)
+static constexpr size_t  kR10AccelYBase = 6u + 285u;      // 100 × int16 LE       (was 4+285)
+static constexpr size_t  kR10AccelZBase = 6u + 485u;      // 100 × int16 LE       (was 4+485)
+static constexpr size_t  kR10MinFrame  = 6u + 485u + 200u;  // 891 bytes          (was 889)
 
 // ── 0x28 R21 (SpO2 Optical) ──────────────────────────────────────────────────
 static constexpr uint8_t kRecTypeR21    = 21u;
-static constexpr size_t  kR21ChCBase    = 4u + 420u;      // IR  channel: 100 × uint32 LE
-static constexpr size_t  kR21ChFBase    = 4u + 1032u;     // Red channel: 100 × uint32 LE
-// Minimum bytes needed for the full Red array (last sample at base + 400 - 4)
-static constexpr size_t  kR21MinFrame   = 4u + 1233u;     // 1237 bytes
+static constexpr size_t  kR21ChCBase    = 6u + 420u;      // IR  channel: 100 × uint32 LE (was 4+420)
+static constexpr size_t  kR21ChFBase    = 6u + 1032u;     // Red channel: 100 × uint32 LE (was 4+1032)
+static constexpr size_t  kR21MinFrame   = 6u + 1233u;     // 1239 bytes                   (was 1237)
 
 static constexpr size_t kCrcLen = 4u;
 

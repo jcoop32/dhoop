@@ -40,10 +40,11 @@ struct RRIntervalRecord {
 // ── Parse result ──────────────────────────────────────────────────────────────
 // Returned by parse() for every message consumed from the Redis stream.
 // crc_valid == false means the payload failed integrity check.
-// Metric optionals are populated based on Gen4 packet type:
-//   0x30 (Event, eventType==17) → skin_temp
-//   0x28 recType==10  (R10)     → hr, accel (if size >= 889 bytes)
-//   0x28 recType==21  (R21)     → spo2      (if size >= 1237 bytes)
+// iOS sends COMPLETE Gen4 frames (AA lenLo lenHi crc8 | 0x23 seq cmd payload crc32).
+// Metric optionals are populated based on Gen4 packet type at byte[6]:
+//   0x30 (Event, eventType==17 at byte[8]) → skin_temp (raw int16 LE at byte[18], /10 = °C)
+//   0x28 recType==10 at byte[7] (R10)      → hr at byte[23], accel (if size >= 891 bytes)
+//   0x28 recType==21 at byte[7] (R21)      → spo2      (if size >= 1239 bytes)
 // rr_intervals is reserved for future use; currently always empty.
 
 struct ParseResult {

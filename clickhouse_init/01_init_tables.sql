@@ -57,11 +57,11 @@ CREATE TABLE IF NOT EXISTS whoop_skin_temp
 ENGINE = ReplacingMergeTree()
 ORDER BY timestamp;
 
--- Blood oxygen saturation samples
+-- Blood oxygen saturation samples (Float32 to preserve decimal from AC/DC ratio method)
 CREATE TABLE IF NOT EXISTS whoop_spo2
 (
     timestamp DateTime64(9),
-    spo2      UInt8
+    spo2      Float32
 )
 ENGINE = ReplacingMergeTree()
 ORDER BY timestamp;

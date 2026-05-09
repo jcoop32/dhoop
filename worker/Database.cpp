@@ -88,7 +88,7 @@ void insertSpO2Batch(clickhouse::Client& ch, const std::vector<whoop::SpO2Record
     if (records.empty()) return;
 
     auto ts_col   = std::make_shared<clickhouse::ColumnDateTime64>(9);
-    auto spo2_col = std::make_shared<clickhouse::ColumnUInt8>();
+    auto spo2_col = std::make_shared<clickhouse::ColumnFloat32>();  // float — preserves decimal precision
 
     for (const auto& r : records) {
         ts_col->Append(r.timestamp_ns);

@@ -193,6 +193,7 @@ async def get_latest_data():
     accel_query     = "SELECT timestamp, acc0 AS accel_x, acc1 AS accel_y, acc2 AS accel_z FROM dhoop.whoop_accelerometer ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
     raw_query       = "SELECT timestamp, data AS hex_data FROM dhoop.whoop_raw_data ORDER BY timestamp DESC LIMIT 20 FORMAT JSON"
     skin_temp_query = "SELECT timestamp, temp_c FROM dhoop.whoop_skin_temp ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
+    spo2_query      = "SELECT timestamp, spo2 FROM dhoop.whoop_spo2 ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
 
     # Each query is isolated — a missing/new table won't kill the whole endpoint.
     async def _query(q: str) -> list:
@@ -203,11 +204,12 @@ async def get_latest_data():
         except Exception:
             return []
 
-    hr_data, accel_data, raw_data, skin_temp_data = (
+    hr_data, accel_data, raw_data, skin_temp_data, spo2_data = (
         await _query(hr_query),
         await _query(accel_query),
         await _query(raw_query),
         await _query(skin_temp_query),
+        await _query(spo2_query),
     )
 
     return {
@@ -215,6 +217,7 @@ async def get_latest_data():
         "accelerometer": accel_data,
         "raw": raw_data,
         "skin_temp": skin_temp_data,
+        "spo2": spo2_data,
     }
 
 # ---------------------------------------------------------------------------

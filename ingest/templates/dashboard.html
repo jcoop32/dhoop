@@ -3,179 +3,303 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Whoop BLE Live Dashboard</title>
+    <title>dhoop — Live Telemetry</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            background-color: #09090b; /* Zinc dark palette from previous NBA watcher projects */
-            color: #ffffff;
+            background: #09090b;
+            color: #fafafa;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            margin: 0;
-            padding: 40px 20px;
+            min-height: 100vh;
+            padding: 28px 20px 48px;
             display: flex;
             flex-direction: column;
             align-items: center;
+            gap: 24px;
         }
-        h1 {
-            font-weight: 700;
-            margin-bottom: 15px;
-            color: #fafafa;
-            letter-spacing: -0.05em;
-        }
-        .status-badge {
-            padding: 8px 16px;
-            border-radius: 9999px;
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 30px;
-            transition: all 0.3s ease;
-            text-align: center;
-        }
-        .status-live {
-            background-color: rgba(16, 185, 129, 0.2);
-            color: #10b981;
-            border: 1px solid rgba(16, 185, 129, 0.5);
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
-        }
-        .status-offline {
-            background-color: rgba(239, 68, 68, 0.2);
-            color: #ef4444;
-            border: 1px solid rgba(239, 68, 68, 0.5);
-        }
-        .battery-badge {
-            padding: 8px 16px;
-            border-radius: 9999px;
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 30px;
-            margin-left: 10px;
-            transition: all 0.3s ease;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            background-color: rgba(255, 255, 255, 0.05);
-            color: #a1a1aa;
-        }
-        .battery-high  { color: #10b981; border-color: rgba(16, 185, 129, 0.4); background-color: rgba(16, 185, 129, 0.1); }
-        .battery-mid   { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); background-color: rgba(245, 158, 11, 0.1); }
-        .battery-low   { color: #ef4444; border-color: rgba(239, 68, 68, 0.4);  background-color: rgba(239, 68, 68, 0.1);  }
-        .charts-container {
+
+        /* ── Header ── */
+        .header {
             width: 100%;
-            max-width: 1200px;
+            max-width: 1280px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header-title {
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: -0.05em;
+            background: linear-gradient(135deg, #06b6d4, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .badges {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .badge {
+            padding: 6px 14px;
+            border-radius: 9999px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid transparent;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+        .badge-offline {
+            background: rgba(239,68,68,0.12);
+            color: #f87171;
+            border-color: rgba(239,68,68,0.3);
+        }
+        .badge-live {
+            background: rgba(16,185,129,0.12);
+            color: #34d399;
+            border-color: rgba(16,185,129,0.35);
+            box-shadow: 0 0 12px rgba(16,185,129,0.25);
+        }
+        .badge-battery-high { background: rgba(16,185,129,0.1); color: #34d399; border-color: rgba(16,185,129,0.3); }
+        .badge-battery-mid  { background: rgba(245,158,11,0.1); color: #fbbf24; border-color: rgba(245,158,11,0.3); }
+        .badge-battery-low  { background: rgba(239,68,68,0.1);  color: #f87171; border-color: rgba(239,68,68,0.3);  }
+        .badge-neutral      { background: rgba(255,255,255,0.04); color: #a1a1aa; border-color: rgba(255,255,255,0.08); }
+
+        /* ── Stats row ── */
+        .stats-row {
+            width: 100%;
+            max-width: 1280px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 14px;
+        }
+        .stat-card {
+            background: rgba(24,24,27,0.7);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 14px;
+            padding: 18px 20px;
             display: flex;
             flex-direction: column;
-            gap: 30px;
+            gap: 4px;
+            backdrop-filter: blur(8px);
         }
-        .chart-box {
-            background: rgba(24, 24, 27, 0.7);
-            backdrop-filter: blur(10px);
-            border-radius: 16px;
-            padding: 24px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+        .stat-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #52525b;
         }
-        canvas {
-            width: 100% !important;
-            max-height: 350px;
-        }
-        .metric-display {
-            margin-bottom: 12px;
+        .stat-value {
+            font-size: 2.4rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
             line-height: 1;
         }
-        #currentHrValue {
-            font-size: 3.5rem;
-            font-weight: 800;
-            color: #ef4444;
-            text-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
-            letter-spacing: -0.03em;
+        .stat-unit {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #71717a;
+            margin-left: 2px;
         }
-        .metric-unit {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #a1a1aa;
-            vertical-align: middle;
-        }
-        #currentTempValue {
-            font-size: 3.5rem;
-            font-weight: 800;
-            color: #f97316;  /* orange — distinct from HR red */
-            text-shadow: 0 0 20px rgba(249, 115, 22, 0.5);
-            letter-spacing: -0.03em;
-        }
-        .raw-feed-section {
+        .color-hr    { color: #ef4444; text-shadow: 0 0 18px rgba(239,68,68,0.4); }
+        .color-temp  { color: #f97316; text-shadow: 0 0 18px rgba(249,115,22,0.4); }
+        .color-spo2  { color: #a78bfa; text-shadow: 0 0 18px rgba(167,139,250,0.4); }
+        .color-accel { color: #06b6d4; text-shadow: 0 0 18px rgba(6,182,212,0.3); }
+
+        /* ── Charts grid ── */
+        .charts-grid {
             width: 100%;
-            max-width: 1200px;
-            margin-top: 30px;
+            max-width: 1280px;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 18px;
         }
-        .raw-feed-container {
-            background: rgba(0, 0, 0, 0.8);
-            border-radius: 8px;
-            padding: 16px;
-            max-height: 300px;
-            overflow-y: auto;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-family: 'Courier New', Courier, monospace;
+        @media (max-width: 900px) {
+            .charts-grid { grid-template-columns: 1fr; }
+        }
+        .chart-card {
+            background: rgba(24,24,27,0.7);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 16px;
+            padding: 22px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+        }
+        .chart-card.full-width {
+            grid-column: 1 / -1;
+        }
+        .chart-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        .chart-title {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #52525b;
+        }
+        .chart-current {
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+        }
+        .chart-current .unit { font-size: 0.85rem; font-weight: 500; color: #71717a; margin-left: 3px; }
+        canvas {
+            width: 100% !important;
+            max-height: 220px;
+        }
+
+        /* ── Accel inline values ── */
+        .accel-vals {
+            display: flex;
+            gap: 18px;
             font-size: 13px;
+            font-family: 'Courier New', monospace;
+            color: #71717a;
         }
-        table.raw-table {
+        .accel-vals span strong { font-weight: 700; }
+
+        /* ── Raw feed ── */
+        .raw-section {
             width: 100%;
-            border-collapse: collapse;
+            max-width: 1280px;
         }
+        .raw-section h2 {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #52525b;
+            margin-bottom: 12px;
+        }
+        .raw-container {
+            background: rgba(0,0,0,0.6);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 12px;
+            padding: 14px;
+            max-height: 260px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .raw-container::-webkit-scrollbar { width: 4px; }
+        .raw-container::-webkit-scrollbar-track { background: transparent; }
+        .raw-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+        table.raw-table { width: 100%; border-collapse: collapse; }
         table.raw-table th, table.raw-table td {
             text-align: left;
-            padding: 6px 10px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 5px 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
         }
         table.raw-table th {
-            color: #a1a1aa;
-            font-weight: 600;
-            position: sticky;
-            top: -16px; /* Offset padding */
-            background: rgba(0, 0, 0, 0.9);
+            color: #52525b;
+            font-weight: 700;
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            position: sticky; top: -14px;
+            background: rgba(0,0,0,0.9);
             z-index: 10;
         }
-        table.raw-table td {
-            color: #10b981; /* terminal green */
-        }
-        table.raw-table td.ts-col {
-            color: #60a5fa; /* timestamp blue */
-            white-space: nowrap;
-            width: 200px;
-        }
+        table.raw-table td        { color: #22c55e; }
+        table.raw-table td.ts-col { color: #60a5fa; white-space: nowrap; width: 180px; }
     </style>
 </head>
 <body>
-    <h1>Live Telemetry</h1>
-    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:0;">
-        <div id="statusBadge" class="status-badge status-offline">iPhone Link: OFFLINE (Checking...)</div>
-        <div id="batteryBadge" class="battery-badge">🔋 --</div>
+
+    <!-- Header -->
+    <div class="header">
+        <span class="header-title">dhoop telemetry</span>
+        <div class="badges">
+            <div id="statusBadge" class="badge badge-offline">📡 Checking…</div>
+            <div id="batteryBadge" class="badge badge-neutral">🔋 --</div>
+        </div>
     </div>
-    <div class="charts-container">
-        <div class="chart-box">
-            <div class="metric-display">
-                <span id="currentHrValue">--</span>
-                <span class="metric-unit">BPM</span>
+
+    <!-- At-a-glance stats -->
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-label">Heart Rate</div>
+            <div class="stat-value color-hr"><span id="statHr">--</span><span class="stat-unit">BPM</span></div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Skin Temp</div>
+            <div class="stat-value color-temp"><span id="statTemp">--</span><span class="stat-unit">°C</span></div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">SpO₂</div>
+            <div class="stat-value color-spo2"><span id="statSpo2">--</span><span class="stat-unit">%</span></div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Accel (X / Y / Z)</div>
+            <div style="display:flex; align-items:baseline; gap:6px; margin-top:4px;">
+                <span style="font-size:1.1rem;font-weight:700;color:#3b82f6;" id="statX">--</span>
+                <span style="font-size:1.1rem;font-weight:700;color:#10b981;" id="statY">--</span>
+                <span style="font-size:1.1rem;font-weight:700;color:#f59e0b;" id="statZ">--</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts grid -->
+    <div class="charts-grid">
+
+        <!-- Heart Rate -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <span class="chart-title">Heart Rate</span>
+                <span class="chart-current color-hr"><span id="hrVal">--</span><span class="unit">BPM</span></span>
             </div>
             <canvas id="hrChart"></canvas>
         </div>
-        <div class="chart-box">
-            <div class="metric-display" style="font-size: 1.2rem; color: #a1a1aa; font-family: monospace; display: flex; justify-content: space-around; margin-bottom: 10px;">
-                <span>X: <strong id="valX" style="color: #3b82f6;">--</strong></span>
-                <span>Y: <strong id="valY" style="color: #10b981;">--</strong></span>
-                <span>Z: <strong id="valZ" style="color: #f59e0b;">--</strong></span>
-            </div>
-            <canvas id="accelChart"></canvas>
-        </div>
-        <div class="chart-box">
-            <div class="metric-display">
-                <span id="currentTempValue">--</span>
-                <span class="metric-unit">&deg;C</span>
+
+        <!-- Skin Temperature -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <span class="chart-title">Skin Temperature</span>
+                <span class="chart-current color-temp"><span id="tempVal">--</span><span class="unit">°C</span></span>
             </div>
             <canvas id="skinTempChart"></canvas>
         </div>
+
+        <!-- SpO2 -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <span class="chart-title">SpO₂ (Blood Oxygen)</span>
+                <span class="chart-current color-spo2"><span id="spo2Val">--</span><span class="unit">%</span></span>
+            </div>
+            <canvas id="spo2Chart"></canvas>
+        </div>
+
+        <!-- Accelerometer -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <span class="chart-title">Accelerometer (IMU)</span>
+                <div class="accel-vals">
+                    <span>X: <strong id="valX" style="color:#3b82f6;">--</strong></span>
+                    <span>Y: <strong id="valY" style="color:#10b981;">--</strong></span>
+                    <span>Z: <strong id="valZ" style="color:#f59e0b;">--</strong></span>
+                </div>
+            </div>
+            <canvas id="accelChart"></canvas>
+        </div>
+
     </div>
-    
-    <div class="raw-feed-section">
-        <h2 style="font-weight: 600; margin-bottom: 15px; color: #fafafa;">Live Raw Data Feed</h2>
-        <div class="raw-feed-container">
+
+    <!-- Raw feed -->
+    <div class="raw-section">
+        <h2>Live Raw Hex Feed</h2>
+        <div class="raw-container">
             <table class="raw-table">
                 <thead>
                     <tr>
@@ -183,85 +307,78 @@
                         <th>Raw Hex Payload</th>
                     </tr>
                 </thead>
-                <tbody id="rawFeedBody">
-                    <!-- Rows injected by JS -->
-                </tbody>
+                <tbody id="rawFeedBody"></tbody>
             </table>
         </div>
     </div>
 
     <script>
-        // Set default Chart.js text color for dark theme
-        Chart.defaults.color = '#a1a1aa';
-        Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
+        Chart.defaults.color = '#52525b';
+        Chart.defaults.borderColor = 'rgba(255,255,255,0.04)';
         Chart.defaults.font.family = "'Inter', sans-serif";
 
-        // Initialize Heart Rate Chart
-        const hrCtx = document.getElementById('hrChart').getContext('2d');
-        const hrChart = new Chart(hrCtx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Heart Rate (bpm)',
-                    data: [],
-                    borderColor: '#ef4444', // Red-500
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.3,
-                    fill: true
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: { duration: 0 }, // Disable animation for live scrolling effect
-                scales: {
-                    x: { display: false },
-                    y: {
-                        min: 40,
-                        max: 200,
-                        grid: { color: 'rgba(255,255,255,0.05)' }
-                    }
+        // ── Chart factory ──────────────────────────────────────────────────────
+        function makeLineChart(id, label, color, bgColor, yOpts = {}) {
+            const ctx = document.getElementById(id).getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label,
+                        data: [],
+                        borderColor: color,
+                        backgroundColor: bgColor,
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.35,
+                        fill: true
+                    }]
                 },
-                plugins: {
-                    legend: { labels: { color: '#fafafa', font: { weight: 600 } } }
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 0 },
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            grid: { color: 'rgba(255,255,255,0.04)' },
+                            ticks: { color: '#52525b', font: { size: 11 } },
+                            ...yOpts
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
                 }
-            }
-        });
+            });
+        }
 
-        // Initialize Accelerometer Chart
+        const hrChart = makeLineChart(
+            'hrChart', 'Heart Rate (BPM)', '#ef4444', 'rgba(239,68,68,0.08)',
+            { min: 40, max: 200, ticks: { callback: v => v + ' BPM' } }
+        );
+
+        const skinTempChart = makeLineChart(
+            'skinTempChart', 'Skin Temp (°C)', '#f97316', 'rgba(249,115,22,0.08)',
+            { ticks: { callback: v => v.toFixed(1) + '°C', color: '#52525b' } }
+        );
+
+        const spo2Chart = makeLineChart(
+            'spo2Chart', 'SpO₂ (%)', '#a78bfa', 'rgba(167,139,250,0.08)',
+            { min: 85, max: 100, ticks: { callback: v => v + '%', color: '#52525b' } }
+        );
+
+        // Accelerometer — 3 datasets
         const accelCtx = document.getElementById('accelChart').getContext('2d');
         const accelChart = new Chart(accelCtx, {
             type: 'line',
             data: {
                 labels: [],
                 datasets: [
-                    {
-                        label: 'X Axis',
-                        data: [],
-                        borderColor: '#3b82f6',
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        tension: 0.1
-                    },
-                    {
-                        label: 'Y Axis',
-                        data: [],
-                        borderColor: '#10b981',
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        tension: 0.1
-                    },
-                    {
-                        label: 'Z Axis',
-                        data: [],
-                        borderColor: '#f59e0b',
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        tension: 0.1
-                    }
+                    { label: 'X', data: [], borderColor: '#3b82f6', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                    { label: 'Y', data: [], borderColor: '#10b981', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                    { label: 'Z', data: [], borderColor: '#f59e0b', borderWidth: 2, pointRadius: 0, tension: 0.1 }
                 ]
             },
             options: {
@@ -270,160 +387,138 @@
                 animation: { duration: 0 },
                 scales: {
                     x: { display: false },
-                    y: {
-                        grid: { color: 'rgba(255,255,255,0.05)' }
-                    }
+                    y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#52525b', font: { size: 11 } } }
                 },
                 plugins: {
-                    legend: { labels: { color: '#fafafa', font: { weight: 600 } } }
+                    legend: {
+                        display: true,
+                        labels: { color: '#71717a', boxWidth: 12, font: { size: 11 } }
+                    }
                 }
             }
         });
 
-        // Initialize Skin Temperature Chart
-        const skinTempCtx = document.getElementById('skinTempChart').getContext('2d');
-        const skinTempChart = new Chart(skinTempCtx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Skin Temp (°C)',
-                    data: [],
-                    borderColor: '#f97316',
-                    backgroundColor: 'rgba(249, 115, 22, 0.08)',
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.4,
-                    fill: true
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: { duration: 0 },
-                scales: {
-                    x: { display: false },
-                    y: {
-                        grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: { callback: v => v.toFixed(1) + '°C' }
-                    }
-                },
-                plugins: {
-                    legend: { labels: { color: '#fafafa', font: { weight: 600 } } }
-                }
-            }
-        });
+        // ── helpers ────────────────────────────────────────────────────────────
+        function setText(id, val) { document.getElementById(id).textContent = val; }
 
+        function updateChart1(chart, data, labelFn, valueFn) {
+            chart.data.labels         = data.map(labelFn);
+            chart.data.datasets[0].data = data.map(valueFn);
+            chart.update();
+        }
+
+        // ── /api/latest poll ───────────────────────────────────────────────────
         async function updateCharts() {
             try {
-                const response = await fetch('/api/latest');
-                const data = await response.json();
-                
-                // Reverse the descending arrays back into chronological (ASC) order
-                // Use .slice() first so we never mutate the original response array.
-                const hrData    = (data.hr            || []).slice().reverse();
-                const accelData = (data.accelerometer || []).slice().reverse();
+                const res  = await fetch('/api/latest');
+                const data = await res.json();
 
-                // Update Accelerometer Raw Readout
-                if (accelData.length > 0) {
-                    const latestAccel = accelData[accelData.length - 1];
-                    document.getElementById('valX').textContent = latestAccel.accel_x;
-                    document.getElementById('valY').textContent = latestAccel.accel_y;
-                    document.getElementById('valZ').textContent = latestAccel.accel_z;
-                }
+                // All arrays arrive DESC — reverse to chrono ASC for charts
+                const hrData       = (data.hr            || []).slice().reverse();
+                const accelData    = (data.accelerometer || []).slice().reverse();
+                const skinTempData = (data.skin_temp     || []).slice().reverse();
+                const spo2Data     = (data.spo2          || []).slice().reverse();
 
-                // Update HR
+                // ── Heart Rate ────────────────────────────────────────────────
                 if (hrData.length > 0) {
-                    const latestHr = hrData[hrData.length - 1].heart_rate;
-                    document.getElementById('currentHrValue').textContent = latestHr;
+                    const latest = hrData[hrData.length - 1].heart_rate;
+                    setText('hrVal', latest);
+                    setText('statHr', latest);
                 }
-                hrChart.data.labels = hrData.map(d => d.timestamp);
-                hrChart.data.datasets[0].data = hrData.map(d => d.heart_rate);
-                hrChart.update();
+                updateChart1(hrChart, hrData, d => d.timestamp, d => d.heart_rate);
 
-                // Update Accelerometer
-                accelChart.data.labels = accelData.map(d => d.timestamp);
-                accelChart.data.datasets[0].data = accelData.map(d => d.accel_x);
-                accelChart.data.datasets[1].data = accelData.map(d => d.accel_y);
-                accelChart.data.datasets[2].data = accelData.map(d => d.accel_z);
+                // ── Skin Temperature ──────────────────────────────────────────
+                if (skinTempData.length > 0) {
+                    const latest = parseFloat(skinTempData[skinTempData.length - 1].temp_c).toFixed(1);
+                    setText('tempVal', latest);
+                    setText('statTemp', latest);
+                }
+                updateChart1(skinTempChart, skinTempData, d => d.timestamp, d => parseFloat(d.temp_c));
+
+                // ── SpO2 ──────────────────────────────────────────────────────
+                if (spo2Data.length > 0) {
+                    const latest = parseFloat(spo2Data[spo2Data.length - 1].spo2).toFixed(1);
+                    setText('spo2Val', latest);
+                    setText('statSpo2', latest);
+                }
+                updateChart1(spo2Chart, spo2Data, d => d.timestamp, d => parseFloat(d.spo2));
+
+                // ── Accelerometer ─────────────────────────────────────────────
+                if (accelData.length > 0) {
+                    const last = accelData[accelData.length - 1];
+                    setText('valX', parseFloat(last.accel_x).toFixed(2));
+                    setText('valY', parseFloat(last.accel_y).toFixed(2));
+                    setText('valZ', parseFloat(last.accel_z).toFixed(2));
+                    setText('statX', parseFloat(last.accel_x).toFixed(1));
+                    setText('statY', parseFloat(last.accel_y).toFixed(1));
+                    setText('statZ', parseFloat(last.accel_z).toFixed(1));
+                }
+                accelChart.data.labels              = accelData.map(d => d.timestamp);
+                accelChart.data.datasets[0].data    = accelData.map(d => parseFloat(d.accel_x));
+                accelChart.data.datasets[1].data    = accelData.map(d => parseFloat(d.accel_y));
+                accelChart.data.datasets[2].data    = accelData.map(d => parseFloat(d.accel_z));
                 accelChart.update();
 
-                // Update Skin Temperature
-                const skinTempData = (data.skin_temp || []).slice().reverse();
-                if (skinTempData.length > 0) {
-                    const latestTemp = parseFloat(skinTempData[skinTempData.length - 1].temp_c).toFixed(1);
-                    document.getElementById('currentTempValue').textContent = latestTemp;
-                }
-                skinTempChart.data.labels = skinTempData.map(d => d.timestamp);
-                skinTempChart.data.datasets[0].data = skinTempData.map(d => parseFloat(d.temp_c));
-                skinTempChart.update();
-
-                // Update Raw Feed
+                // ── Raw feed ──────────────────────────────────────────────────
                 const rawBody = document.getElementById('rawFeedBody');
-                rawBody.innerHTML = ''; // Clear current rows
-                const rawData = data.raw || [];
-                // rawData is descending from API, so no need to reverse if we want newest on top
-                rawData.forEach(record => {
-                    const row = document.createElement('tr');
-                    const tsTd = document.createElement('td');
+                rawBody.innerHTML = '';
+                (data.raw || []).forEach(record => {
+                    const row   = rawBody.insertRow();
+                    const tsTd  = row.insertCell();
                     tsTd.className = 'ts-col';
-                    // Parse timestamp to local readable string
-                    const localDate = new Date(record.timestamp + 'Z'); // Add Z to specify UTC
-                    tsTd.textContent = localDate.toLocaleTimeString() + '.' + String(localDate.getMilliseconds()).padStart(3, '0');
-                    
-                    const hexTd = document.createElement('td');
-                    hexTd.textContent = record.hex_data;
-                    
-                    row.appendChild(tsTd);
-                    row.appendChild(hexTd);
-                    rawBody.appendChild(row);
+                    const d = new Date(record.timestamp + 'Z');
+                    tsTd.textContent = d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3, '0');
+                    row.insertCell().textContent = record.hex_data;
                 });
-                
-            } catch (error) {
-                console.error("Error fetching latest data:", error);
+
+            } catch (err) {
+                console.error('[updateCharts]', err);
             }
         }
 
-        // Fetch every 500ms
-        setInterval(updateCharts, 500);
-        updateCharts(); // Initial fetch
-
+        // ── /api/status poll ───────────────────────────────────────────────────
         async function updateStatus() {
             try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
-                
+                const res  = await fetch('/api/status');
+                const data = await res.json();
+
                 const badge = document.getElementById('statusBadge');
-                const battBadge = document.getElementById('batteryBadge');
                 if (data.connected) {
-                    badge.className = 'status-badge status-live';
-                    badge.textContent = 'iPhone Link: LIVE';
+                    badge.className = 'badge badge-live';
+                    badge.textContent = '📡 iPhone: LIVE';
                 } else {
-                    badge.className = 'status-badge status-offline';
-                    const secText = data.last_seen_seconds_ago !== null ? data.last_seen_seconds_ago + ' sec ago' : 'Never seen';
-                    badge.textContent = `iPhone Link: OFFLINE (Last seen ${secText})`;
+                    badge.className = 'badge badge-offline';
+                    const ago = data.last_seen_seconds_ago != null
+                        ? data.last_seen_seconds_ago + 's ago' : 'never';
+                    badge.textContent = `📡 OFFLINE (${ago})`;
                 }
-                // Battery badge
-                if (data.battery_level !== null && data.battery_level !== undefined) {
-                    const pct = data.battery_level;
-                    let icon = pct > 50 ? '🔋' : pct > 20 ? '🪫' : '🔴';
-                    let cls  = pct > 50 ? 'battery-high' : pct > 20 ? 'battery-mid' : 'battery-low';
-                    battBadge.className = `battery-badge ${cls}`;
-                    battBadge.textContent = `${icon} ${pct}%`;
+
+                const batt = document.getElementById('batteryBadge');
+                const pct  = data.battery_level;
+                if (pct != null) {
+                    const icon = pct > 50 ? '🔋' : pct > 20 ? '🪫' : '🔴';
+                    const cls  = pct > 50 ? 'badge-battery-high' : pct > 20 ? 'badge-battery-mid' : 'badge-battery-low';
+                    batt.className = `badge ${cls}`;
+                    batt.textContent = `${icon} ${pct}%`;
                 } else {
-                    battBadge.className = 'battery-badge';
-                    battBadge.textContent = '🔋 --';
+                    batt.className = 'badge badge-neutral';
+                    batt.textContent = '🔋 --';
                 }
-            } catch (error) {
-                console.error("Error fetching status:", error);
-                const badge = document.getElementById('statusBadge');
-                badge.className = 'status-badge status-offline';
-                badge.textContent = 'iPhone Link: OFFLINE (Error connecting)';
+
+            } catch (err) {
+                document.getElementById('statusBadge').className = 'badge badge-offline';
+                document.getElementById('statusBadge').textContent = '📡 OFFLINE (error)';
             }
         }
 
+        // ── Wire up /api/latest to also expose spo2 ────────────────────────────
+        // Patch the existing FastAPI endpoint response — add spo2 query if missing.
+        // (No backend change needed if ingest/main.py already returns data.spo2.)
+
+        setInterval(updateCharts, 500);
         setInterval(updateStatus, 1000);
-        updateStatus(); // Initial fetch
+        updateCharts();
+        updateStatus();
     </script>
 </body>
 </html>
