@@ -176,9 +176,9 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Branch B — 0x28 Realtime Data packet
+    // Branch B — 0x28 / 0x2B Realtime Data packet
     // ═══════════════════════════════════════════════════════════════════════════
-    if (pktType == kTypeRealtimeData) {
+    if (pktType == kTypeRealtimeData || pktType == kTypeRawRealtime) {
         // Need byte[5] for the record sub-type.
         if (bytes.size() <= kRecTypeIdx)
             return result;
