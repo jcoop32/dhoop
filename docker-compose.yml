@@ -53,6 +53,9 @@ services:
       CLICKHOUSE_USER:     ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       API_KEY: ${API_KEY}                  # sourced from .env
+      USER_BIRTHDATE:   ${USER_BIRTHDATE:-2000-01-01}
+      USER_WEIGHT_KG:  ${USER_WEIGHT_KG:-75}
+      USER_HEIGHT_CM:  ${USER_HEIGHT_CM:-180}
     depends_on:
       redis:
         condition: service_healthy         # wait for Redis to pass its healthcheck
