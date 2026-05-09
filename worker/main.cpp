@@ -91,14 +91,19 @@ int main() {
             auto it = result.find(stream_name);
             if (it == result.end() || it->second.empty()) continue;
 
-            std::vector<db::RawRecord>       raw_batch;
-            std::vector<whoop::HrRecord>     hr_batch;
-            std::vector<whoop::AccelRecord>  accel_batch;
-            std::vector<std::string>         ack_ids;
+            std::vector<db::RawRecord>              raw_batch;
+            std::vector<whoop::HrRecord>             hr_batch;
+            std::vector<whoop::AccelRecord>          accel_batch;
+            std::vector<whoop::SkinTempRecord>       skin_temp_batch;
+            std::vector<whoop::SpO2Record>           spo2_batch;
+            std::vector<whoop::RRIntervalRecord>     rr_batch;
+            std::vector<std::string>                 ack_ids;
 
             raw_batch.reserve(it->second.size());
             hr_batch.reserve(it->second.size());
             accel_batch.reserve(it->second.size());
+            skin_temp_batch.reserve(it->second.size());
+            spo2_batch.reserve(it->second.size());
             ack_ids.reserve(it->second.size());
 
             for (const auto& [msg_id, opt_fields] : it->second) {
@@ -128,8 +133,12 @@ int main() {
                         std::cerr << "[worker] CRC FAIL " << msg_id << " — extracting metrics anyway\n";
                     }
 
-                    if (r.hr)    hr_batch.push_back(*r.hr);
-                    if (r.accel) accel_batch.push_back(*r.accel);
+                    if (r.hr)        hr_batch.push_back(*r.hr);
+                    if (r.accel)     accel_batch.push_back(*r.accel);
+                    if (r.skin_temp) skin_temp_batch.push_back(*r.skin_temp);
+                    if (r.spo2)      spo2_batch.push_back(*r.spo2);
+                    for (const auto& rr : r.rr_intervals)
+                        rr_batch.push_back(rr);
 
                     ack_ids.push_back(msg_id);
                 } catch (const std::exception& ex) {
@@ -142,15 +151,27 @@ int main() {
             // Insert before ACK — crash safety: no data loss on restart.
             if (!raw_batch.empty()) {
                 db::insertRawBatch(ch, raw_batch);
-                std::cout << "[worker] INSERT " << raw_batch.size()   << " rows → whoop_raw_data\n";
+                std::cout << "[worker] INSERT " << raw_batch.size()        << " rows → whoop_raw_data\n";
             }
             if (!hr_batch.empty()) {
                 db::insertHrBatch(ch, hr_batch);
-                std::cout << "[worker] INSERT " << hr_batch.size()    << " rows → whoop_hr\n";
+                std::cout << "[worker] INSERT " << hr_batch.size()         << " rows → whoop_hr\n";
             }
             if (!accel_batch.empty()) {
                 db::insertAccelBatch(ch, accel_batch);
-                std::cout << "[worker] INSERT " << accel_batch.size() << " rows → whoop_accelerometer\n";
+                std::cout << "[worker] INSERT " << accel_batch.size()      << " rows → whoop_accelerometer\n";
+            }
+            if (!skin_temp_batch.empty()) {
+                db::insertSkinTempBatch(ch, skin_temp_batch);
+                std::cout << "[worker] INSERT " << skin_temp_batch.size()  << " rows → whoop_skin_temp\n";
+            }
+            if (!spo2_batch.empty()) {
+                db::insertSpO2Batch(ch, spo2_batch);
+                std::cout << "[worker] INSERT " << spo2_batch.size()       << " rows → whoop_spo2\n";
+            }
+            if (!rr_batch.empty()) {
+                db::insertRRBatch(ch, rr_batch);
+                std::cout << "[worker] INSERT " << rr_batch.size()         << " rows → whoop_rr_intervals\n";
             }
 
             if (!ack_ids.empty())

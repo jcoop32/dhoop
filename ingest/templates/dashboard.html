@@ -93,6 +93,13 @@
             color: #a1a1aa;
             vertical-align: middle;
         }
+        #currentTempValue {
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: #f97316;  /* orange — distinct from HR red */
+            text-shadow: 0 0 20px rgba(249, 115, 22, 0.5);
+            letter-spacing: -0.03em;
+        }
         .raw-feed-section {
             width: 100%;
             max-width: 1200px;
@@ -151,6 +158,13 @@
         </div>
         <div class="chart-box">
             <canvas id="accelChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <div class="metric-display">
+                <span id="currentTempValue">--</span>
+                <span class="metric-unit">&deg;C</span>
+            </div>
+            <canvas id="skinTempChart"></canvas>
         </div>
     </div>
     
@@ -222,7 +236,7 @@
                     {
                         label: 'X Axis',
                         data: [],
-                        borderColor: '#3b82f6', // Blue-500
+                        borderColor: '#3b82f6',
                         borderWidth: 2,
                         pointRadius: 0,
                         tension: 0.1
@@ -230,7 +244,7 @@
                     {
                         label: 'Y Axis',
                         data: [],
-                        borderColor: '#10b981', // Emerald-500
+                        borderColor: '#10b981',
                         borderWidth: 2,
                         pointRadius: 0,
                         tension: 0.1
@@ -238,7 +252,7 @@
                     {
                         label: 'Z Axis',
                         data: [],
-                        borderColor: '#f59e0b', // Amber-500
+                        borderColor: '#f59e0b',
                         borderWidth: 2,
                         pointRadius: 0,
                         tension: 0.1
@@ -255,6 +269,40 @@
                         min: -2.5,
                         max: 2.5,
                         grid: { color: 'rgba(255,255,255,0.05)' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#fafafa', font: { weight: 600 } } }
+                }
+            }
+        });
+
+        // Initialize Skin Temperature Chart
+        const skinTempCtx = document.getElementById('skinTempChart').getContext('2d');
+        const skinTempChart = new Chart(skinTempCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Skin Temp (°C)',
+                    data: [],
+                    borderColor: '#f97316',
+                    backgroundColor: 'rgba(249, 115, 22, 0.08)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                scales: {
+                    x: { display: false },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { callback: v => v.toFixed(1) + '°C' }
                     }
                 },
                 plugins: {
@@ -287,6 +335,16 @@
                 accelChart.data.datasets[1].data = accelData.map(d => d.accel_y);
                 accelChart.data.datasets[2].data = accelData.map(d => d.accel_z);
                 accelChart.update();
+
+                // Update Skin Temperature
+                const skinTempData = (data.skin_temp || []).slice().reverse();
+                if (skinTempData.length > 0) {
+                    const latestTemp = parseFloat(skinTempData[skinTempData.length - 1].temp_c).toFixed(1);
+                    document.getElementById('currentTempValue').textContent = latestTemp;
+                }
+                skinTempChart.data.labels = skinTempData.map(d => d.timestamp);
+                skinTempChart.data.datasets[0].data = skinTempData.map(d => parseFloat(d.temp_c));
+                skinTempChart.update();
 
                 // Update Raw Feed
                 const rawBody = document.getElementById('rawFeedBody');

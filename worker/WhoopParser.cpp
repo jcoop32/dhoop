@@ -103,11 +103,39 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     // Branch B: SyncBatchData — 0x05 at byte[6], min 52 bytes for full accel block
     else if (bytes.size() >= kSBMinFrame && bytes[kSBTypeIndex] == kSyncBatchDataType) {
         result.hr = HrRecord{ timestamp_ns, bytes[kSBHrIndex] };
+
+        // ── Accelerometer: 3 × IEEE-754 float32 ─────────────────────────────
         float x = 0.f, y = 0.f, z = 0.f;
         std::memcpy(&x, bytes.data() + kSBAccelXIndex, sizeof(float));
         std::memcpy(&y, bytes.data() + kSBAccelYIndex, sizeof(float));
         std::memcpy(&z, bytes.data() + kSBAccelZIndex, sizeof(float));
         result.accel = AccelRecord{ timestamp_ns, x, y, z };
+
+        // ── Skin temperature: 16-bit LE ADC at byte[36] / 100 → Celsius ─────
+        if (bytes.size() > 37) {
+            const uint16_t raw_temp =
+                  static_cast<uint16_t>(bytes[36])
+                | (static_cast<uint16_t>(bytes[37]) << 8);
+            result.skin_temp = SkinTempRecord{ timestamp_ns, raw_temp / 100.0f };
+        }
+
+        // ── SpO2: uint8 at byte[38] ──────────────────────────────────────────
+        if (bytes.size() > 38) {
+            result.spo2 = SpO2Record{ timestamp_ns, bytes[38] };
+        }
+
+        // ── RR intervals: 16-bit LE pairs starting at byte[52] ──────────────
+        // Each pair encodes one beat-to-beat interval in milliseconds.
+        // Iterate until 4 bytes before end (CRC tail) to stay in-bounds.
+        const size_t payload_end = bytes.size() - kCrcLen;
+        for (size_t i = kSBMinFrame; i + 1 < payload_end; i += 2) {
+            const uint16_t rr =
+                  static_cast<uint16_t>(bytes[i])
+                | (static_cast<uint16_t>(bytes[i + 1]) << 8);
+            if (rr > 0) {  // 0 is a sentinel — skip
+                result.rr_intervals.push_back(RRIntervalRecord{ timestamp_ns, rr });
+            }
+        }
     }
 
     return result;

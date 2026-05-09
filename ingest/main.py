@@ -178,15 +178,16 @@ async def get_latest_data():
     Fetches the latest 50 rows from whoop_hr and whoop_accelerometer 
     from ClickHouse via HTTP interface.
     """
-    hr_query = "SELECT timestamp, hr AS heart_rate FROM dhoop.whoop_hr ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
-    accel_query = "SELECT timestamp, acc0 AS accel_x, acc1 AS accel_y, acc2 AS accel_z FROM dhoop.whoop_accelerometer ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
-    raw_query = "SELECT timestamp, data AS hex_data FROM dhoop.whoop_raw_data ORDER BY timestamp DESC LIMIT 20 FORMAT JSON"
-    
+    hr_query        = "SELECT timestamp, hr AS heart_rate FROM dhoop.whoop_hr ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
+    accel_query     = "SELECT timestamp, acc0 AS accel_x, acc1 AS accel_y, acc2 AS accel_z FROM dhoop.whoop_accelerometer ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
+    raw_query       = "SELECT timestamp, data AS hex_data FROM dhoop.whoop_raw_data ORDER BY timestamp DESC LIMIT 20 FORMAT JSON"
+    skin_temp_query = "SELECT timestamp, temp_c FROM dhoop.whoop_skin_temp ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
+
     try:
         hr_resp = await http_client.post("/", params={"query": hr_query})
         hr_resp.raise_for_status()
         hr_data = hr_resp.json().get("data", [])
-        
+
         accel_resp = await http_client.post("/", params={"query": accel_query})
         accel_resp.raise_for_status()
         accel_data = accel_resp.json().get("data", [])
@@ -194,11 +195,16 @@ async def get_latest_data():
         raw_resp = await http_client.post("/", params={"query": raw_query})
         raw_resp.raise_for_status()
         raw_data = raw_resp.json().get("data", [])
-        
+
+        skin_temp_resp = await http_client.post("/", params={"query": skin_temp_query})
+        skin_temp_resp.raise_for_status()
+        skin_temp_data = skin_temp_resp.json().get("data", [])
+
         return {
             "hr": hr_data,
             "accelerometer": accel_data,
-            "raw": raw_data
+            "raw": raw_data,
+            "skin_temp": skin_temp_data,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
