@@ -14,11 +14,11 @@ struct HrRecord {
     uint8_t  hr;
 };
 
-// Accel: single scalar representing the mean vector magnitude (m/s² or raw LSB)
-// computed across the 100-sample IMU window in an R10 packet.
 struct AccelRecord {
     uint64_t timestamp_ns;
-    float    magnitude;   // mean of sqrt(x²+y²+z²) over 100 int16 LE samples
+    float    x;
+    float    y;
+    float    z;
 };
 
 struct SkinTempRecord {

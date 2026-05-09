@@ -203,15 +203,10 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
 
             // IMU: only extract if the full Z array is present.
             if (bytes.size() >= kR10MinFrame) {
-                double magnitudeSum = 0.0;
-                for (size_t i = 0; i < 100u; ++i) {
-                    const double x = static_cast<double>(readI16LE(bytes, kR10AccelXBase + i * 2u));
-                    const double y = static_cast<double>(readI16LE(bytes, kR10AccelYBase + i * 2u));
-                    const double z = static_cast<double>(readI16LE(bytes, kR10AccelZBase + i * 2u));
-                    magnitudeSum += std::sqrt(x * x + y * y + z * z);
-                }
-                const float magnitude = static_cast<float>(magnitudeSum / 100.0);
-                result.accel = AccelRecord{ timestamp_ns, magnitude };
+                const float x = static_cast<float>(readI16LE(bytes, kR10AccelXBase));
+                const float y = static_cast<float>(readI16LE(bytes, kR10AccelYBase));
+                const float z = static_cast<float>(readI16LE(bytes, kR10AccelZBase));
+                result.accel = AccelRecord{ timestamp_ns, x, y, z };
             }
 
             return result;
