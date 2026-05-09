@@ -214,11 +214,11 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             if (bytes.size() < kR21MinFrame)
                 return result;
 
-            // Read 100 × uint32 LE for IR (chC) and Red (chF) channels.
+            // Read 100 × uint16 LE for IR (chC) and Red (chF) channels.
             std::vector<double> ir(100), red(100);
             for (size_t i = 0; i < 100u; ++i) {
-                ir[i]  = static_cast<double>(readU32LE(bytes, kR21ChCBase + i * 4u));
-                red[i] = static_cast<double>(readU32LE(bytes, kR21ChFBase + i * 4u));
+                ir[i]  = static_cast<double>(readU16LE(bytes, kR21ChCBase + i * 2u));
+                red[i] = static_cast<double>(readU16LE(bytes, kR21ChFBase + i * 2u));
             }
 
             const double dc_ir  = mean(ir);
