@@ -194,31 +194,28 @@ async def get_latest_data():
     raw_query       = "SELECT timestamp, data AS hex_data FROM dhoop.whoop_raw_data ORDER BY timestamp DESC LIMIT 20 FORMAT JSON"
     skin_temp_query = "SELECT timestamp, temp_c FROM dhoop.whoop_skin_temp ORDER BY timestamp DESC LIMIT 50 FORMAT JSON"
 
-    try:
-        hr_resp = await http_client.post("/", params={"query": hr_query})
-        hr_resp.raise_for_status()
-        hr_data = hr_resp.json().get("data", [])
+    # Each query is isolated — a missing/new table won't kill the whole endpoint.
+    async def _query(q: str) -> list:
+        try:
+            r = await http_client.post("/", params={"query": q})
+            r.raise_for_status()
+            return r.json().get("data", [])
+        except Exception:
+            return []
 
-        accel_resp = await http_client.post("/", params={"query": accel_query})
-        accel_resp.raise_for_status()
-        accel_data = accel_resp.json().get("data", [])
+    hr_data, accel_data, raw_data, skin_temp_data = (
+        await _query(hr_query),
+        await _query(accel_query),
+        await _query(raw_query),
+        await _query(skin_temp_query),
+    )
 
-        raw_resp = await http_client.post("/", params={"query": raw_query})
-        raw_resp.raise_for_status()
-        raw_data = raw_resp.json().get("data", [])
-
-        skin_temp_resp = await http_client.post("/", params={"query": skin_temp_query})
-        skin_temp_resp.raise_for_status()
-        skin_temp_data = skin_temp_resp.json().get("data", [])
-
-        return {
-            "hr": hr_data,
-            "accelerometer": accel_data,
-            "raw": raw_data,
-            "skin_temp": skin_temp_data,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "hr": hr_data,
+        "accelerometer": accel_data,
+        "raw": raw_data,
+        "skin_temp": skin_temp_data,
+    }
 
 # ---------------------------------------------------------------------------
 # Internal helper — read-merge-write to whoop_daily_summary

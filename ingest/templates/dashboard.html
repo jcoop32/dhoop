@@ -316,9 +316,10 @@
                 const response = await fetch('/api/latest');
                 const data = await response.json();
                 
-                // Reverse the descending arrays back into chronological (ASC) order for left-to-right rendering
-                const hrData = data.hr.reverse();
-                const accelData = data.accelerometer.reverse();
+                // Reverse the descending arrays back into chronological (ASC) order
+                // Use .slice() first so we never mutate the original response array.
+                const hrData    = (data.hr            || []).slice().reverse();
+                const accelData = (data.accelerometer || []).slice().reverse();
 
                 // Update HR
                 if (hrData.length > 0) {
