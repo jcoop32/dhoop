@@ -53,50 +53,59 @@ static std::vector<uint8_t> hexToBytes(const std::string& hex) {
 }
 
 // ── Gen4 frame layout constants ───────────────────────────────────────────────
-// iOS FrameReassembler sends complete Gen4 frames:
+// Confirmed from whoomp.js (jogolden/whoomp) — authoritative Whoop 4.0 RE.
+//
+// Full framed packet:
 //   [0]    0xAA  — sync
-//   [1..2] uint16 LE body length
+//   [1..2] uint16 LE total length (includes CRC32)
 //   [3]    CRC-8(len)
-//   [4]    pktType — packet type discriminator  ← kTypeIndex
-//   [5]    recType — record sub-type (R10/R21) or event sub-type
-//   [6..]  payload
+//   [4]    type  — PacketType discriminator  ← kTypeIndex
+//   [5]    seq   — sequence number
+//   [6]    cmd   — command/event number      ← kCmdIndex
+//   [7..]  data  — metric payload            ← kDataBase
 //   [last-3..last] CRC-32 LE
 //
-// NOTE: The 0x23+seq inner-frame prefix ONLY appears on kCmdFromStrap command
-// response frames (parsed in BLEManager.swift for battery). Telemetry frames
-// from kWhoopData and kWhoopEvents do NOT have this prefix.
+// PacketType enum (decimal / hex):
+//   COMMAND          = 35  / 0x23
+//   COMMAND_RESPONSE = 36  / 0x24
+//   REALTIME_DATA    = 40  / 0x28
+//   REALTIME_RAW     = 43  / 0x2B
+//   EVENT            = 48  / 0x30
 
-// Packet type discriminator: byte[4]
-static constexpr uint8_t kTypeEvent        = 0x30u;
-static constexpr uint8_t kTypeRealtimeData = 0x28u;
-static constexpr uint8_t kTypeRawRealtime  = 0x2Bu;
+static constexpr uint8_t kTypeEvent        = 0x30u;  // 48
+static constexpr uint8_t kTypeRealtimeData = 0x28u;  // 40
+static constexpr uint8_t kTypeRawRealtime  = 0x2Bu;  // 43
 
-// Shared indices
-static constexpr size_t kTypeIndex  = 4u;   // packet type byte
-static constexpr size_t kRecTypeIdx = 5u;   // record sub-type (R10 / R21)
+static constexpr size_t kTypeIndex = 4u;  // PacketType byte
+static constexpr size_t kCmdIndex  = 6u;  // cmd / event-number byte
+static constexpr size_t kDataBase  = 7u;  // first payload byte
 
-// ── 0x30 Event (Skin Temperature) ────────────────────────────────────────────
-// byte[4]    = 0x30 (pktType)
-// byte[6..7] = uint16 LE event type
-// byte[16..17] = int16 LE raw temperature (÷10 = °C)
-static constexpr size_t   kEvtEventTypeIdx = 6u;
-static constexpr uint16_t kEvtTempType     = 17u;   // Temperature event ID
-static constexpr size_t   kEvtTempIdx      = 16u;   // int16 LE raw value
-static constexpr size_t   kEvtMinFrame     = kEvtTempIdx + 2u;  // 18 bytes
+// ── 0x30 EVENT — Skin Temperature ────────────────────────────────────────────
+// bytes[4] = 0x30 (EVENT)
+// bytes[6] = 17   (EventNumber::TEMPERATURE_LEVEL)
+// bytes[7..8] = uint16 LE raw temperature, units = 0.01 °C  (divide by 100.0)
+static constexpr uint8_t kEvtTempCmd      = 17u;   // TEMPERATURE_LEVEL event
+static constexpr size_t  kEvtTempIdx      = 7u;    // uint16 LE at bytes[7]
+static constexpr size_t  kEvtMinFrame     = kEvtTempIdx + 2u;  // 9 bytes minimum
 
-// ── 0x28 R10 (HR + IMU) ──────────────────────────────────────────────────────
+// ── 0x28 REALTIME_DATA — HR + Accel (R10) ────────────────────────────────────
+// bytes[4] = 0x28 (REALTIME_DATA)
+// bytes[6] = record sub-type (10 = R10)
+// bytes[7..] = R10 payload
+// HR: packet.data[5] confirmed in whoomp.js → absolute byte[4+3+5] = byte[12]
 static constexpr uint8_t kRecTypeR10    = 10u;
-static constexpr size_t  kR10HrIndex   = 21u;             // uint8 HR byte
-static constexpr size_t  kR10AccelXBase = 4u + 85u;       // 100 × int16 LE
-static constexpr size_t  kR10AccelYBase = 4u + 285u;      // 100 × int16 LE
-static constexpr size_t  kR10AccelZBase = 4u + 485u;      // 100 × int16 LE
-static constexpr size_t  kR10MinFrame  = 4u + 485u + 200u;  // 889 bytes
+static constexpr size_t  kR10HrIndex   = 12u;            // uint8 HR byte
+static constexpr size_t  kR10AccelXBase = kDataBase + 85u;   // 100 × int16 LE
+static constexpr size_t  kR10AccelYBase = kDataBase + 285u;  // 100 × int16 LE
+static constexpr size_t  kR10AccelZBase = kDataBase + 485u;  // 100 × int16 LE
+static constexpr size_t  kR10MinFrame   = kDataBase + 485u + 200u;  // 892 bytes
 
-// ── 0x28 R21 (SpO2 Optical) ──────────────────────────────────────────────────
+// ── 0x28 REALTIME_DATA — SpO2 (R21) ──────────────────────────────────────────
+// bytes[4] = 0x28, bytes[6] = 21 (R21)
 static constexpr uint8_t kRecTypeR21    = 21u;
-static constexpr size_t  kR21ChCBase    = 4u + 420u;      // IR  channel: 100 × uint32 LE
-static constexpr size_t  kR21ChFBase    = 4u + 1032u;     // Red channel: 100 × uint32 LE
-static constexpr size_t  kR21MinFrame   = 4u + 1233u;     // 1237 bytes
+static constexpr size_t  kR21ChCBase    = kDataBase + 420u;   // IR  channel: 100 × uint32 LE
+static constexpr size_t  kR21ChFBase    = kDataBase + 1032u;  // Red channel: 100 × uint32 LE
+static constexpr size_t  kR21MinFrame   = kDataBase + 1233u;  // 1240 bytes
 
 static constexpr size_t kCrcLen = 4u;
 
@@ -170,19 +179,19 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     // Branch A — 0x30 Event packet → Skin Temperature
     // ═══════════════════════════════════════════════════════════════════════════
     if (pktType == kTypeEvent) {
-        // Need at least 2 bytes for the event type field at byte[6].
-        if (bytes.size() < kEvtEventTypeIdx + 2u)
+        // Event number is in the cmd byte at kCmdIndex
+        if (bytes.size() <= kCmdIndex)
             return result;
 
-        const uint16_t eventType = readU16LE(bytes, kEvtEventTypeIdx);
+        const uint8_t eventNum = bytes[kCmdIndex];  // e.g. 17 = TEMPERATURE_LEVEL
 
-        if (eventType == kEvtTempType) {
-            // Need 2 more bytes for the int16 LE temperature at byte[16].
+        if (eventNum == kEvtTempCmd) {
+            // Temperature uint16 LE at bytes[7..8], units = 0.01 °C
             if (bytes.size() < kEvtMinFrame)
                 return result;
 
-            const int16_t raw = readI16LE(bytes, kEvtTempIdx);
-            result.skin_temp  = SkinTempRecord{ timestamp_ns, raw / 10.0f };
+            const uint16_t raw = readU16LE(bytes, kEvtTempIdx);
+            result.skin_temp   = SkinTempRecord{ timestamp_ns, raw / 100.0f };
         }
 
         return result;
@@ -192,24 +201,15 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     // Branch B — 0x28 / 0x2B Realtime Data packet
     // ═══════════════════════════════════════════════════════════════════════════
     if (pktType == kTypeRealtimeData || pktType == kTypeRawRealtime) {
-        // Need byte[5] for the record sub-type.
-        if (bytes.size() <= kRecTypeIdx)
+        // Record sub-type is in the cmd byte at kCmdIndex
+        if (bytes.size() <= kCmdIndex)
             return result;
 
-        const uint8_t recType = bytes[kRecTypeIdx];
-
-        // ── Sub-branch B0: R2 — Basic HR ─────────────────────────────────────
-        if (recType == 2u) {
-            // HR is at byte 20 in the R2 packet
-            if (bytes.size() > 20u) {
-                result.hr = HrRecord{ timestamp_ns, bytes[20u] };
-            }
-            return result;
-        }
+        const uint8_t recType = bytes[kCmdIndex];  // 10=R10, 21=R21
 
         // ── Sub-branch B1: R10 — Heart Rate + IMU ────────────────────────────
         if (recType == kRecTypeR10) {
-            // HR is always present if we can reach byte[21].
+            // HR: confirmed at packet.data[5] = absolute byte[12]
             if (bytes.size() > kR10HrIndex) {
                 result.hr = HrRecord{ timestamp_ns, bytes[kR10HrIndex] };
             }
@@ -231,11 +231,11 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             if (bytes.size() < kR21MinFrame)
                 return result;
 
-            // Read 100 × uint16 LE for IR (chC) and Red (chF) channels.
+            // Read 100 × uint32 LE for IR (chC) and Red (chF) channels.
             std::vector<double> ir(100), red(100);
             for (size_t i = 0; i < 100u; ++i) {
-                ir[i]  = static_cast<double>(readU16LE(bytes, kR21ChCBase + i * 2u));
-                red[i] = static_cast<double>(readU16LE(bytes, kR21ChFBase + i * 2u));
+                ir[i]  = static_cast<double>(readU32LE(bytes, kR21ChCBase + i * 4u));
+                red[i] = static_cast<double>(readU32LE(bytes, kR21ChFBase + i * 4u));
             }
 
             const double dc_ir  = mean(ir);
