@@ -1,8 +1,11 @@
 #include "WhoopParser.h"
 
+#include <algorithm>    // std::clamp
 #include <array>
+#include <cmath>        // std::sqrt
 #include <cstdint>
-#include <cstring>        // std::memcpy
+#include <cstring>      // std::memcpy
+#include <numeric>      // std::accumulate
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -49,22 +52,71 @@ static std::vector<uint8_t> hexToBytes(const std::string& hex) {
     return out;
 }
 
-// ── Frame layout constants ────────────────────────────────────────────────────
-// Health Monitor packet (0xFF) — 29-byte live stream
-static constexpr uint8_t kHealthMonitorType  = 0xFFu;
-static constexpr size_t  kHMTypeIndex        = 3u;
-static constexpr size_t  kHMHrIndex          = 12u;
+// ── Gen4 frame layout constants ───────────────────────────────────────────────
 
-// SyncBatchData packet (0x05) — 56-byte historic batch
-static constexpr uint8_t kSyncBatchDataType  = 0x05u;
-static constexpr size_t  kSBTypeIndex        = 6u;
-static constexpr size_t  kSBHrIndex          = 21u;
-static constexpr size_t  kSBAccelXIndex      = 40u;
-static constexpr size_t  kSBAccelYIndex      = 44u;
-static constexpr size_t  kSBAccelZIndex      = 48u;
-static constexpr size_t  kSBMinFrame         = kSBAccelZIndex + sizeof(float); // 52
+// Packet type discriminator: byte[4]
+static constexpr uint8_t kTypeEvent        = 0x30u;
+static constexpr uint8_t kTypeRealtimeData = 0x28u;
+static constexpr uint8_t kTypeRawRealtime  = 0x2Bu;  // reserved / no extraction
 
-static constexpr size_t  kCrcLen             = 4u;
+// Shared indices
+static constexpr size_t kTypeIndex  = 4u;   // packet type byte
+static constexpr size_t kRecTypeIdx = 5u;   // record sub-type (R10 / R21)
+
+// ── 0x30 Event (Skin Temperature) ────────────────────────────────────────────
+static constexpr size_t   kEvtEventTypeIdx = 6u;    // uint16 LE event type
+static constexpr uint16_t kEvtTempType     = 17u;   // Temperature event ID
+static constexpr size_t   kEvtTempIdx      = 16u;   // int16 LE raw value
+static constexpr size_t   kEvtMinFrame     = kEvtTempIdx + 2u;  // 18 bytes
+
+// ── 0x28 R10 (HR + IMU) ──────────────────────────────────────────────────────
+static constexpr uint8_t kRecTypeR10    = 10u;
+static constexpr size_t  kR10HrIndex   = 21u;             // uint8 HR byte
+static constexpr size_t  kR10AccelXBase = 4u + 85u;       // 100 × int16 LE
+static constexpr size_t  kR10AccelYBase = 4u + 285u;      // 100 × int16 LE
+static constexpr size_t  kR10AccelZBase = 4u + 485u;      // 100 × int16 LE
+// Minimum bytes needed for the full Z array (last sample ends at base + 200)
+static constexpr size_t  kR10MinFrame  = 4u + 485u + 200u;  // 889 bytes
+
+// ── 0x28 R21 (SpO2 Optical) ──────────────────────────────────────────────────
+static constexpr uint8_t kRecTypeR21    = 21u;
+static constexpr size_t  kR21ChCBase    = 4u + 420u;      // IR  channel: 100 × uint32 LE
+static constexpr size_t  kR21ChFBase    = 4u + 1032u;     // Red channel: 100 × uint32 LE
+// Minimum bytes needed for the full Red array (last sample at base + 400 - 4)
+static constexpr size_t  kR21MinFrame   = 4u + 1233u;     // 1237 bytes
+
+static constexpr size_t kCrcLen = 4u;
+
+// ── Helper: read uint16 LE from byte array at offset (bounds-checked) ─────────
+static uint16_t readU16LE(const std::vector<uint8_t>& b, size_t off) {
+    return static_cast<uint16_t>(b[off]) | (static_cast<uint16_t>(b[off + 1]) << 8);
+}
+
+// ── Helper: read int16 LE from byte array at offset (bounds-checked) ──────────
+static int16_t readI16LE(const std::vector<uint8_t>& b, size_t off) {
+    return static_cast<int16_t>(readU16LE(b, off));
+}
+
+// ── Helper: read uint32 LE from byte array at offset (bounds-checked) ─────────
+static uint32_t readU32LE(const std::vector<uint8_t>& b, size_t off) {
+    return  static_cast<uint32_t>(b[off])
+          | (static_cast<uint32_t>(b[off + 1]) <<  8)
+          | (static_cast<uint32_t>(b[off + 2]) << 16)
+          | (static_cast<uint32_t>(b[off + 3]) << 24);
+}
+
+// ── Helper: mean of a double vector ───────────────────────────────────────────
+static double mean(const std::vector<double>& v) {
+    return std::accumulate(v.begin(), v.end(), 0.0) / static_cast<double>(v.size());
+}
+
+// ── Helper: population standard deviation of a double vector ─────────────────
+static double stddev(const std::vector<double>& v) {
+    const double m = mean(v);
+    double acc = 0.0;
+    for (double x : v) acc += (x - m) * (x - m);
+    return std::sqrt(acc / static_cast<double>(v.size()));
+}
 
 } // anonymous namespace
 
@@ -81,7 +133,7 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
 
     const uint32_t embedded =
           static_cast<uint32_t>(crc_ptr[0])
-        | (static_cast<uint32_t>(crc_ptr[1]) << 8)
+        | (static_cast<uint32_t>(crc_ptr[1]) <<  8)
         | (static_cast<uint32_t>(crc_ptr[2]) << 16)
         | (static_cast<uint32_t>(crc_ptr[3]) << 24);
 
@@ -95,49 +147,100 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     // CRC bypass — extract metrics regardless of validation result
     // if (!result.crc_valid) return result;
 
-    // ── Dual-branch metric extraction ─────────────────────────────────────────
-    // Branch A: Health Monitor stream — 0xFF at byte[3], min 13 bytes
-    if (bytes.size() > 12 && bytes[kHMTypeIndex] == kHealthMonitorType) {
-        result.hr = HrRecord{ timestamp_ns, bytes[kHMHrIndex] };
+    // Guard: every Gen4 packet must be long enough to reach byte[kTypeIndex].
+    if (bytes.size() <= kTypeIndex)
+        return result;
+
+    const uint8_t pktType = bytes[kTypeIndex];
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Branch A — 0x30 Event packet → Skin Temperature
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (pktType == kTypeEvent) {
+        // Need at least 2 bytes for the event type field at byte[6].
+        if (bytes.size() < kEvtEventTypeIdx + 2u)
+            return result;
+
+        const uint16_t eventType = readU16LE(bytes, kEvtEventTypeIdx);
+
+        if (eventType == kEvtTempType) {
+            // Need 2 more bytes for the int16 LE temperature at byte[16].
+            if (bytes.size() < kEvtMinFrame)
+                return result;
+
+            const int16_t raw = readI16LE(bytes, kEvtTempIdx);
+            result.skin_temp  = SkinTempRecord{ timestamp_ns, raw / 10.0f };
+        }
+
+        return result;
     }
-    // Branch B: SyncBatchData — 0x05 at byte[6], min 52 bytes for full accel block
-    else if (bytes.size() >= kSBMinFrame && bytes[kSBTypeIndex] == kSyncBatchDataType) {
-        result.hr = HrRecord{ timestamp_ns, bytes[kSBHrIndex] };
 
-        // ── Accelerometer: 3 × IEEE-754 float32 ─────────────────────────────
-        float x = 0.f, y = 0.f, z = 0.f;
-        std::memcpy(&x, bytes.data() + kSBAccelXIndex, sizeof(float));
-        std::memcpy(&y, bytes.data() + kSBAccelYIndex, sizeof(float));
-        std::memcpy(&z, bytes.data() + kSBAccelZIndex, sizeof(float));
-        result.accel = AccelRecord{ timestamp_ns, x, y, z };
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Branch B — 0x28 Realtime Data packet
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (pktType == kTypeRealtimeData) {
+        // Need byte[5] for the record sub-type.
+        if (bytes.size() <= kRecTypeIdx)
+            return result;
 
-        // ── Skin temperature: 16-bit LE ADC at byte[36] / 100 → Celsius ─────
-        if (bytes.size() > 37) {
-            const uint16_t raw_temp =
-                  static_cast<uint16_t>(bytes[36])
-                | (static_cast<uint16_t>(bytes[37]) << 8);
-            result.skin_temp = SkinTempRecord{ timestamp_ns, raw_temp / 100.0f };
-        }
+        const uint8_t recType = bytes[kRecTypeIdx];
 
-        // ── SpO2: uint8 at byte[38] ──────────────────────────────────────────
-        if (bytes.size() > 38) {
-            result.spo2 = SpO2Record{ timestamp_ns, bytes[38] };
-        }
-
-        // ── RR intervals: 16-bit LE pairs starting at byte[52] ──────────────
-        // Each pair encodes one beat-to-beat interval in milliseconds.
-        // Iterate until 4 bytes before end (CRC tail) to stay in-bounds.
-        const size_t payload_end = bytes.size() - kCrcLen;
-        for (size_t i = kSBMinFrame; i + 1 < payload_end; i += 2) {
-            const uint16_t rr =
-                  static_cast<uint16_t>(bytes[i])
-                | (static_cast<uint16_t>(bytes[i + 1]) << 8);
-            if (rr > 0) {  // 0 is a sentinel — skip
-                result.rr_intervals.push_back(RRIntervalRecord{ timestamp_ns, rr });
+        // ── Sub-branch B1: R10 — Heart Rate + IMU ────────────────────────────
+        if (recType == kRecTypeR10) {
+            // HR is always present if we can reach byte[21].
+            if (bytes.size() > kR10HrIndex) {
+                result.hr = HrRecord{ timestamp_ns, bytes[kR10HrIndex] };
             }
+
+            // IMU: only extract if the full Z array is present.
+            if (bytes.size() >= kR10MinFrame) {
+                double magnitudeSum = 0.0;
+                for (size_t i = 0; i < 100u; ++i) {
+                    const double x = static_cast<double>(readI16LE(bytes, kR10AccelXBase + i * 2u));
+                    const double y = static_cast<double>(readI16LE(bytes, kR10AccelYBase + i * 2u));
+                    const double z = static_cast<double>(readI16LE(bytes, kR10AccelZBase + i * 2u));
+                    magnitudeSum += std::sqrt(x * x + y * y + z * z);
+                }
+                const float magnitude = static_cast<float>(magnitudeSum / 100.0);
+                result.accel = AccelRecord{ timestamp_ns, magnitude };
+            }
+
+            return result;
         }
+
+        // ── Sub-branch B2: R21 — SpO2 Optical ────────────────────────────────
+        if (recType == kRecTypeR21) {
+            // Require the full Red channel array to be present.
+            if (bytes.size() < kR21MinFrame)
+                return result;
+
+            // Read 100 × uint32 LE for IR (chC) and Red (chF) channels.
+            std::vector<double> ir(100), red(100);
+            for (size_t i = 0; i < 100u; ++i) {
+                ir[i]  = static_cast<double>(readU32LE(bytes, kR21ChCBase + i * 4u));
+                red[i] = static_cast<double>(readU32LE(bytes, kR21ChFBase + i * 4u));
+            }
+
+            const double dc_ir  = mean(ir);
+            const double dc_red = mean(red);
+            const double ac_ir  = stddev(ir);
+            const double ac_red = stddev(red);
+
+            // Guard against degenerate signals (flat-line or zero DC).
+            if (dc_ir > 0.0 && dc_red > 0.0 && ac_ir > 0.0) {
+                const double ratio = (ac_red / dc_red) / (ac_ir / dc_ir);
+                const double spo2  = std::clamp(110.0 - 25.0 * ratio, 85.0, 100.0);
+                result.spo2 = SpO2Record{ timestamp_ns, static_cast<float>(spo2) };
+            }
+
+            return result;
+        }
+
+        // Unknown recType — return result with CRC info only.
+        return result;
     }
 
+    // 0x2B (kTypeRawRealtime) and any other types — no metric extraction.
     return result;
 }
 
