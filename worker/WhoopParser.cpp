@@ -274,11 +274,15 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             }
 
             // IMU: only extract if the full Z array is present.
+            // Scale: ±8g range → 1g = 4096 LSB  (confirmed: |(-1394,-2945,2511)| ≈ 4114 ≈ 4096)
             if (bytes.size() >= kR10MinFrame) {
-                const float x = static_cast<float>(readI16LE(bytes, kR10AccelXBase));
-                const float y = static_cast<float>(readI16LE(bytes, kR10AccelYBase));
-                const float z = static_cast<float>(readI16LE(bytes, kR10AccelZBase));
+                constexpr float kAccelScale = 4096.0f;  // LSB/g for ±8g mode
+                const float x = static_cast<float>(readI16LE(bytes, kR10AccelXBase)) / kAccelScale;
+                const float y = static_cast<float>(readI16LE(bytes, kR10AccelYBase)) / kAccelScale;
+                const float z = static_cast<float>(readI16LE(bytes, kR10AccelZBase)) / kAccelScale;
                 result.accel = AccelRecord{ timestamp_ns, x, y, z };
+                std::fprintf(stderr, "[parser] 📐 ACCEL x=%.3fg y=%.3fg z=%.3fg |g|=%.3fg\n",
+                    x, y, z, std::sqrt(x*x + y*y + z*z));
             }
 
             return result;
