@@ -157,6 +157,11 @@
             <canvas id="hrChart"></canvas>
         </div>
         <div class="chart-box">
+            <div class="metric-display" style="font-size: 1.2rem; color: #a1a1aa; font-family: monospace; display: flex; justify-content: space-around; margin-bottom: 10px;">
+                <span>X: <strong id="valX" style="color: #3b82f6;">--</strong></span>
+                <span>Y: <strong id="valY" style="color: #10b981;">--</strong></span>
+                <span>Z: <strong id="valZ" style="color: #f59e0b;">--</strong></span>
+            </div>
             <canvas id="accelChart"></canvas>
         </div>
         <div class="chart-box">
@@ -318,6 +323,14 @@
                 // Use .slice() first so we never mutate the original response array.
                 const hrData    = (data.hr            || []).slice().reverse();
                 const accelData = (data.accelerometer || []).slice().reverse();
+
+                // Update Accelerometer Raw Readout
+                if (accelData.length > 0) {
+                    const latestAccel = accelData[accelData.length - 1];
+                    document.getElementById('valX').textContent = latestAccel.accel_x;
+                    document.getElementById('valY').textContent = latestAccel.accel_y;
+                    document.getElementById('valZ').textContent = latestAccel.accel_z;
+                }
 
                 // Update HR
                 if (hrData.length > 0) {
