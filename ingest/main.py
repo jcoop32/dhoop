@@ -536,8 +536,10 @@ async def get_caloric_burn():
 async def get_history():
     """Returns the last 14 days of daily summaries from whoop_daily_summary."""
     q = (
-        "SELECT date, sleep_score, daily_strain, resting_hr, hrv_rmssd, "
-        "sleep_duration_min, time_in_bed_min, disturbances "
+        "SELECT date, "
+        "toInt32(sleep_score) AS sleep_score, "
+        "daily_strain AS strain, "
+        "resting_hr, hrv_rmssd "
         "FROM dhoop.whoop_daily_summary "
         "WHERE date >= today() - 14 "
         "ORDER BY date ASC FORMAT JSON"
@@ -571,11 +573,12 @@ async def get_baselines():
         raise HTTPException(status_code=502, detail=str(e))
 
     if len(rows) < 3:
+        # Return zero-filled defaults so iOS decoder doesn't fail on null fields
         return {
             "status": "insufficient_data",
             "detail": f"Only {len(rows)} days with valid data (need ≥3).",
-            "hrv_low": None, "hrv_high": None,
-            "rhr_low": None, "rhr_high": None,
+            "hrv_low": 0.0, "hrv_high": 0.0,
+            "rhr_low": 0.0, "rhr_high": 0.0,
         }
 
     df = pd.DataFrame(rows).apply(pd.to_numeric, errors="coerce").dropna()
