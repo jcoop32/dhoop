@@ -79,10 +79,11 @@ static constexpr size_t kRecTypeIdx = 5u;   // sub-type / event-number byte
 // ── 0x30 EVENT — Skin Temperature ─────────────────────────────────────────────
 // bytes[4] = 0x30
 // bytes[5] = event number (17 = TEMPERATURE_LEVEL)
-// bytes[16..17] = int16 LE raw temperature (÷10 = °C)  ← original empirical value
+// Temperature encoding: int16 LE in centidegrees (÷100 = °C)
+// Offset is TBD — offset scan prints all candidates to stderr
 static constexpr uint16_t kEvtTempType  = 17u;   // TEMPERATURE_LEVEL
-static constexpr size_t   kEvtTempIdx   = 16u;   // int16 LE raw temp
-static constexpr size_t   kEvtMinFrame  = kEvtTempIdx + 2u;  // 18 bytes
+static constexpr size_t   kEvtTempIdx   = 6u;    // UPDATED: probe from offset 6
+static constexpr size_t   kEvtMinFrame  = kEvtTempIdx + 2u;  // 8 bytes minimum
 
 // ── 0x28/0x2B R10 — Heart Rate + IMU ──────────────────────────────────────────
 // CONFIRMED: recType(bytes[5])=10, HR at bytes[21]
@@ -190,22 +191,57 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
     // Branch A — 0x30 Event packet → Skin Temperature
     // ═══════════════════════════════════════════════════════════════════════════
     if (pktType == kTypeEvent) {
-        // Event number is at bytes[kRecTypeIdx] = bytes[5], same as DATA sub-type
         if (bytes.size() <= kRecTypeIdx)
             return result;
 
-        const uint8_t eventNum = bytes[kRecTypeIdx];  // e.g. 17 = TEMPERATURE_LEVEL
+        const uint8_t eventNum = bytes[kRecTypeIdx];  // bytes[5]
+
+        // ── Full EVENT packet hex dump (packets are small, dump everything) ─────
+        {
+            std::string full_dump;
+            for (size_t i = 0; i < bytes.size(); ++i) {
+                char buf[8];
+                std::snprintf(buf, sizeof(buf), "%02zu:%02X ", i, bytes[i]);
+                full_dump += buf;
+            }
+            std::fprintf(stderr, "[parser] EVENT 0x%02X size=%zu FULL DUMP:\n  %s\n",
+                eventNum, bytes.size(), full_dump.c_str());
+            std::fflush(stderr);
+        }
+
         std::fprintf(stderr, "[parser] EVENT: eventNum=0x%02X (%u), want %u\n",
             eventNum, eventNum, kEvtTempType);
 
         if (eventNum == kEvtTempType) {
-            // int16 LE temperature at bytes[16..17] (÷10 = °C)
-            if (bytes.size() < kEvtMinFrame)
-                return result;
+            // Probe multiple candidate offsets to find the real temperature
+            // (centidegrees ÷100 = °C; expect 3100-3700 for 31-37°C wrist skin)
+            static const size_t probes[] = { 6, 7, 8, 10, 11, 12, 16 };
+            for (size_t off : probes) {
+                if (bytes.size() >= off + 2) {
+                    const int16_t   raw_s = readI16LE(bytes, off);
+                    const uint16_t  raw_u = readU16LE(bytes, off);
+                    std::fprintf(stderr,
+                        "[parser]   probe b[%zu..%zu] i16=%d u16=%u → %.2f°C (÷100) | %.1f°C (÷10)\n",
+                        off, off+1, raw_s, raw_u, raw_s/100.0f, raw_s/10.0f);
+                }
+            }
+            std::fflush(stderr);
 
-            const int16_t raw = readI16LE(bytes, kEvtTempIdx);
-            result.skin_temp  = SkinTempRecord{ timestamp_ns, raw / 10.0f };
-            std::fprintf(stderr, "[parser] 🌡️ TEMP raw=%d → %.1f°C\n", raw, raw / 10.0f);
+            // Use offset 6 ÷100 as the current best guess;
+            // update kEvtTempIdx once the correct offset is confirmed from logs above
+            if (bytes.size() >= kEvtTempIdx + 2) {
+                const int16_t raw = readI16LE(bytes, kEvtTempIdx);
+                const float   temp_c = raw / 100.0f;
+                // Sanity gate: only store if in plausible human range (20–45°C)
+                if (temp_c >= 20.0f && temp_c <= 45.0f) {
+                    result.skin_temp = SkinTempRecord{ timestamp_ns, temp_c };
+                    std::fprintf(stderr, "[parser] 🌡️ TEMP b[%zu] raw=%d → %.2f°C ✅\n",
+                        kEvtTempIdx, raw, temp_c);
+                } else {
+                    std::fprintf(stderr, "[parser] 🌡️ TEMP b[%zu] raw=%d → %.2f°C ❌ OUT OF RANGE\n",
+                        kEvtTempIdx, raw, temp_c);
+                }
+            }
         }
 
         return result;
