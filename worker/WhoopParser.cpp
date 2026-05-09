@@ -223,16 +223,16 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             eventNum, eventNum, kEvtTempType, kEvtTempType);
 
         if (eventNum == kEvtTempType) {
-            // Use kEvtTempIdx (=16) ÷10.0; updated offset for Skin Temp
+            // Use kEvtTempIdx (=16) ÷100.0; updated offset for Skin Temp
             if (bytes.size() >= kEvtTempIdx + 2) {
                 const int16_t raw    = readI16LE(bytes, kEvtTempIdx);
-                const float   temp_c = raw / 10.0f;
+                const float   temp_c = raw / 100.0f;
                 if (temp_c >= 20.0f && temp_c <= 45.0f) {
                     result.skin_temp = SkinTempRecord{ timestamp_ns, temp_c };
-                    std::fprintf(stderr, "[parser] 🌡️ STORED %.1f°C (raw=%d b[%zu]) ✅\n",
+                    std::fprintf(stderr, "[parser] 🌡️ STORED %.2f°C (raw=%d b[%zu]) ✅\n",
                         temp_c, raw, kEvtTempIdx);
                 } else {
-                    std::fprintf(stderr, "[parser] 🌡️ RANGE FAIL %.1f°C (raw=%d b[%zu]) ❌\n",
+                    std::fprintf(stderr, "[parser] 🌡️ RANGE FAIL %.2f°C (raw=%d b[%zu]) ❌\n",
                         temp_c, raw, kEvtTempIdx);
                 }
             }
