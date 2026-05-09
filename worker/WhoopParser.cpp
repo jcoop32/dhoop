@@ -185,6 +185,15 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
 
         const uint8_t recType = bytes[kRecTypeIdx];
 
+        // ── Sub-branch B0: R2 — Basic HR ─────────────────────────────────────
+        if (recType == 2u) {
+            // HR is at byte 20 in the R2 packet
+            if (bytes.size() > 20u) {
+                result.hr = HrRecord{ timestamp_ns, bytes[20u] };
+            }
+            return result;
+        }
+
         // ── Sub-branch B1: R10 — Heart Rate + IMU ────────────────────────────
         if (recType == kRecTypeR10) {
             // HR is always present if we can reach byte[21].
