@@ -224,6 +224,8 @@
         <div class="badges">
             <div id="statusBadge" class="badge badge-offline">📡 Checking…</div>
             <div id="batteryBadge" class="badge badge-neutral">🔋 --</div>
+            <div id="wristBadge" class="badge badge-neutral">⌚ --</div>
+            <div id="tapBadge" class="badge badge-neutral" style="display:none; border-color: #eab308; color: #eab308;">👋 DOUBLE TAP</div>
         </div>
     </div>
 
@@ -292,6 +294,19 @@
                 </div>
             </div>
             <canvas id="accelChart"></canvas>
+        </div>
+
+        <!-- Gyroscope -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <span class="chart-title">Gyroscope (Rotation)</span>
+                <div class="accel-vals">
+                    <span>X: <strong id="gyroX" style="color:#a855f7;">--</strong></span>
+                    <span>Y: <strong id="gyroY" style="color:#ec4899;">--</strong></span>
+                    <span>Z: <strong id="gyroZ" style="color:#eab308;">--</strong></span>
+                </div>
+            </div>
+            <canvas id="gyroChart"></canvas>
         </div>
 
     </div>
@@ -398,6 +413,35 @@
             }
         });
 
+        // Gyroscope — 3 datasets
+        const gyroCtx = document.getElementById('gyroChart').getContext('2d');
+        const gyroChart = new Chart(gyroCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'X', data: [], borderColor: '#a855f7', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                    { label: 'Y', data: [], borderColor: '#ec4899', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                    { label: 'Z', data: [], borderColor: '#eab308', borderWidth: 2, pointRadius: 0, tension: 0.1 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                scales: {
+                    x: { display: false },
+                    y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#52525b', font: { size: 11 } } }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: { color: '#71717a', boxWidth: 12, font: { size: 11 } }
+                    }
+                }
+            }
+        });
+
         // ── helpers ────────────────────────────────────────────────────────────
         function setText(id, val) { document.getElementById(id).textContent = val; }
 
@@ -418,6 +462,9 @@
                 const accelData    = (data.accelerometer || []).slice().reverse();
                 const skinTempData = (data.skin_temp     || []).slice().reverse();
                 const spo2Data     = (data.spo2          || []).slice().reverse();
+                const gyroData     = (data.gyro          || []).slice().reverse();
+                const tapData      = (data.double_tap    || []).slice().reverse();
+                const wristData    = (data.wrist_state   || []).slice().reverse();
 
                 // ── Heart Rate ────────────────────────────────────────────────
                 if (hrData.length > 0) {
@@ -458,6 +505,44 @@
                 accelChart.data.datasets[1].data    = accelData.map(d => parseFloat(d.accel_y));
                 accelChart.data.datasets[2].data    = accelData.map(d => parseFloat(d.accel_z));
                 accelChart.update();
+
+                // ── Gyroscope ─────────────────────────────────────────────
+                if (gyroData.length > 0) {
+                    const last = gyroData[gyroData.length - 1];
+                    setText('gyroX', parseFloat(last.gx).toFixed(2));
+                    setText('gyroY', parseFloat(last.gy).toFixed(2));
+                    setText('gyroZ', parseFloat(last.gz).toFixed(2));
+                }
+                gyroChart.data.labels              = gyroData.map(d => d.timestamp);
+                gyroChart.data.datasets[0].data    = gyroData.map(d => parseFloat(d.gx));
+                gyroChart.data.datasets[1].data    = gyroData.map(d => parseFloat(d.gy));
+                gyroChart.data.datasets[2].data    = gyroData.map(d => parseFloat(d.gz));
+                gyroChart.update();
+
+                // ── Wrist State ───────────────────────────────────────────
+                const wristBadge = document.getElementById('wristBadge');
+                if (wristData.length > 0) {
+                    const last = wristData[wristData.length - 1];
+                    if (last.on_wrist == 1) {
+                        wristBadge.className = 'badge badge-live';
+                        wristBadge.textContent = '⌚ ON WRIST';
+                    } else {
+                        wristBadge.className = 'badge badge-offline';
+                        wristBadge.textContent = '⌚ OFF WRIST';
+                    }
+                }
+
+                // ── Double Tap ────────────────────────────────────────────
+                const tapBadge = document.getElementById('tapBadge');
+                if (tapData.length > 0) {
+                    const lastTapTime = new Date(tapData[tapData.length - 1].timestamp + 'Z').getTime();
+                    const now = new Date().getTime();
+                    if (now - lastTapTime < 5000) {
+                        tapBadge.style.display = 'inline-block';
+                    } else {
+                        tapBadge.style.display = 'none';
+                    }
+                }
 
                 // ── Raw feed ──────────────────────────────────────────────────
                 const rawBody = document.getElementById('rawFeedBody');
