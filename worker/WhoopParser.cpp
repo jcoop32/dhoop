@@ -175,6 +175,24 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
 
     const uint8_t pktType = bytes[kTypeIndex];
 
+    // ── DEBUG: log every packet's type/sub-type bytes and first 30 bytes ────
+    {
+        const size_t dump_len = std::min(bytes.size(), size_t(30));
+        std::string hex_dump;
+        for (size_t i = 0; i < dump_len; ++i) {
+            char buf[4];
+            std::snprintf(buf, sizeof(buf), "%02X ", bytes[i]);
+            hex_dump += buf;
+        }
+        std::fprintf(stderr,
+            "[parser] type=0x%02X b[5]=0x%02X b[6]=0x%02X size=%zu  | %s\n",
+            pktType,
+            bytes.size() > 5 ? bytes[5] : 0xFF,
+            bytes.size() > 6 ? bytes[6] : 0xFF,
+            bytes.size(), hex_dump.c_str());
+        std::fflush(stderr);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Branch A — 0x30 Event packet → Skin Temperature
     // ═══════════════════════════════════════════════════════════════════════════
@@ -184,6 +202,7 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             return result;
 
         const uint8_t eventNum = bytes[kCmdIndex];  // e.g. 17 = TEMPERATURE_LEVEL
+        std::fprintf(stderr, "[parser] EVENT: eventNum=%u (want %u)\n", eventNum, kEvtTempCmd);
 
         if (eventNum == kEvtTempCmd) {
             // Temperature uint16 LE at bytes[7..8], units = 0.01 °C
@@ -192,6 +211,7 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
 
             const uint16_t raw = readU16LE(bytes, kEvtTempIdx);
             result.skin_temp   = SkinTempRecord{ timestamp_ns, raw / 100.0f };
+            std::fprintf(stderr, "[parser] TEMP raw=%u → %.2f°C\n", raw, raw / 100.0f);
         }
 
         return result;
@@ -206,10 +226,16 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             return result;
 
         const uint8_t recType = bytes[kCmdIndex];  // 10=R10, 21=R21
+        std::fprintf(stderr, "[parser] REALTIME: recType(b[6])=%u recType(b[5])=%u\n",
+            recType, bytes.size() > 5 ? bytes[5] : 0xFF);
 
         // ── Sub-branch B1: R10 — Heart Rate + IMU ────────────────────────────
         if (recType == kRecTypeR10) {
             // HR: confirmed at packet.data[5] = absolute byte[12]
+            std::fprintf(stderr, "[parser] R10 MATCH: size=%zu b[12]=0x%02X b[21]=0x%02X\n",
+                bytes.size(),
+                bytes.size() > 12 ? bytes[12] : 0xFF,
+                bytes.size() > 21 ? bytes[21] : 0xFF);
             if (bytes.size() > kR10HrIndex) {
                 result.hr = HrRecord{ timestamp_ns, bytes[kR10HrIndex] };
             }
