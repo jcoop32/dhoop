@@ -26,6 +26,29 @@ struct SkinTempRecord {
     float    temp_c;      // int16 LE at event byte[16] / 10.0 → degrees Celsius
 };
 
+struct GyroRecord {
+    uint64_t timestamp_ns;
+    float    x;
+    float    y;
+    float    z;
+};
+
+struct DoubleTapRecord {
+    uint64_t timestamp_ns;
+};
+
+struct WristStateRecord {
+    uint64_t timestamp_ns;
+    bool     on_wrist; // true if placed on (10), false if removed (9)
+};
+
+struct PpgWaveformRecord {
+    uint64_t timestamp_ns;
+    std::vector<uint32_t> green;
+    std::vector<uint32_t> red;
+    std::vector<uint32_t> infrared;
+};
+
 // SpO2: floating-point result from the AC/DC ratio method applied to R21 optical data.
 struct SpO2Record {
     uint64_t timestamp_ns;
@@ -54,8 +77,12 @@ struct ParseResult {
 
     std::optional<HrRecord>       hr;
     std::optional<AccelRecord>    accel;
+    std::optional<GyroRecord>     gyro;
     std::optional<SkinTempRecord> skin_temp;
     std::optional<SpO2Record>     spo2;
+    std::optional<DoubleTapRecord> double_tap;
+    std::optional<WristStateRecord> wrist_state;
+    std::optional<PpgWaveformRecord> ppg_waveform;
     std::vector<RRIntervalRecord> rr_intervals; // empty = not present
 };
 

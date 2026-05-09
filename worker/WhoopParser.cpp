@@ -86,8 +86,8 @@ static constexpr size_t kRecTypeIdx = 5u;   // sub-type / event-number byte
 //       the seq happened to equal 17, triggering a spurious temp match.
 static constexpr uint16_t kEvtTempType  = 17u;    // TEMPERATURE_LEVEL
 static constexpr size_t   kEvtTypeIdx   = 6u;     // event type byte (CMD field)
-static constexpr size_t   kEvtTempIdx   = 7u;     // first payload byte; probe from here
-static constexpr size_t   kEvtMinFrame  = kEvtTempIdx + 2u;  // need at least bytes[7..8]
+static constexpr size_t   kEvtTempIdx   = 16u;    // Fixed offset for Skin Temp
+static constexpr size_t   kEvtMinFrame  = kEvtTempIdx + 2u;
 
 // ── 0x28/0x2B R10 — Heart Rate + IMU ──────────────────────────────────────────
 // CONFIRMED: recType(bytes[5])=10, HR at bytes[21]
@@ -96,11 +96,15 @@ static constexpr size_t  kR10HrIndex   = 21u;          // uint8 HR — CONFIRMED
 static constexpr size_t  kR10AccelXBase = 4u + 85u;    // 100 × int16 LE
 static constexpr size_t  kR10AccelYBase = 4u + 285u;   // 100 × int16 LE
 static constexpr size_t  kR10AccelZBase = 4u + 485u;   // 100 × int16 LE
-static constexpr size_t  kR10MinFrame   = 4u + 485u + 200u;  // 889 bytes
+static constexpr size_t  kR10GyroXBase  = kR10AccelZBase + 200u; // 100 × int16 LE
+static constexpr size_t  kR10GyroYBase  = kR10GyroXBase + 200u;  // 100 × int16 LE
+static constexpr size_t  kR10GyroZBase  = kR10GyroYBase + 200u;  // 100 × int16 LE
+static constexpr size_t  kR10MinFrame   = kR10GyroZBase + 200u;  // 1289 bytes
 
 // ── 0x28/0x2B R21 — SpO2 Optical ─────────────────────────────────────────────
 // bytes[5] = 21 (R21)
 static constexpr uint8_t kRecTypeR21    = 21u;
+static constexpr size_t  kR21ChGreenBase= 4u + 20u;    // Green channel: 100 × uint32 LE
 static constexpr size_t  kR21ChCBase    = 4u + 420u;   // IR  channel: 100 × uint32 LE
 static constexpr size_t  kR21ChFBase    = 4u + 1032u;  // Red channel: 100 × uint32 LE
 static constexpr size_t  kR21MinFrame   = 4u + 1233u;  // 1237 bytes
@@ -219,33 +223,25 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             eventNum, eventNum, kEvtTempType, kEvtTempType);
 
         if (eventNum == kEvtTempType) {
-            // Probe candidate offsets 7..16 for a plausible skin temp
-            // Expect int16 LE centidegrees: 3100–3700 → 31–37°C
-            std::fprintf(stderr, "[parser] 🌡️ TEMPERATURE EVENT — probing offsets:\n");
-            for (size_t off = 7; off <= 16 && off + 1 < bytes.size(); ++off) {
-                const int16_t  raw_s = readI16LE(bytes, off);
-                const uint16_t raw_u = readU16LE(bytes, off);
-                std::fprintf(stderr,
-                    "[parser]   b[%02zu..%02zu] i16=%6d u16=%5u  ÷100=%.2f°C  ÷10=%.1f°C%s\n",
-                    off, off+1, raw_s, raw_u,
-                    raw_s/100.0f, raw_s/10.0f,
-                    (raw_s >= 2000 && raw_s <= 4200) ? "  ← ✓ PLAUSIBLE" : "");
-            }
-            std::fflush(stderr);
-
-            // Use kEvtTempIdx (=7) ÷100; update once correct offset is confirmed
+            // Use kEvtTempIdx (=16) ÷10.0; updated offset for Skin Temp
             if (bytes.size() >= kEvtTempIdx + 2) {
                 const int16_t raw    = readI16LE(bytes, kEvtTempIdx);
-                const float   temp_c = raw / 100.0f;
+                const float   temp_c = raw / 10.0f;
                 if (temp_c >= 20.0f && temp_c <= 45.0f) {
                     result.skin_temp = SkinTempRecord{ timestamp_ns, temp_c };
-                    std::fprintf(stderr, "[parser] 🌡️ STORED %.2f°C (raw=%d b[%zu]) ✅\n",
+                    std::fprintf(stderr, "[parser] 🌡️ STORED %.1f°C (raw=%d b[%zu]) ✅\n",
                         temp_c, raw, kEvtTempIdx);
                 } else {
-                    std::fprintf(stderr, "[parser] 🌡️ RANGE FAIL %.2f°C (raw=%d b[%zu]) ❌\n",
+                    std::fprintf(stderr, "[parser] 🌡️ RANGE FAIL %.1f°C (raw=%d b[%zu]) ❌\n",
                         temp_c, raw, kEvtTempIdx);
                 }
             }
+        } else if (eventNum == 14) {
+            result.double_tap = DoubleTapRecord{ timestamp_ns };
+            std::fprintf(stderr, "[parser] 👋 DOUBLE TAP DETECTED\n");
+        } else if (eventNum == 9 || eventNum == 10) {
+            result.wrist_state = WristStateRecord{ timestamp_ns, eventNum == 10 };
+            std::fprintf(stderr, "[parser] ⌚ WRIST STATE: %s\n", eventNum == 10 ? "ON" : "OFF");
         }
 
         return result;
@@ -277,12 +273,19 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             // Scale: ±8g range → 1g = 4096 LSB  (confirmed: |(-1394,-2945,2511)| ≈ 4114 ≈ 4096)
             if (bytes.size() >= kR10MinFrame) {
                 constexpr float kAccelScale = 4096.0f;  // LSB/g for ±8g mode
+                constexpr float kGyroScale = 16.4f;     // LSB/(deg/s) for ±2000 dps
                 const float x = static_cast<float>(readI16LE(bytes, kR10AccelXBase)) / kAccelScale;
                 const float y = static_cast<float>(readI16LE(bytes, kR10AccelYBase)) / kAccelScale;
                 const float z = static_cast<float>(readI16LE(bytes, kR10AccelZBase)) / kAccelScale;
                 result.accel = AccelRecord{ timestamp_ns, x, y, z };
                 std::fprintf(stderr, "[parser] 📐 ACCEL x=%.3fg y=%.3fg z=%.3fg |g|=%.3fg\n",
                     x, y, z, std::sqrt(x*x + y*y + z*z));
+
+                const float gx = static_cast<float>(readI16LE(bytes, kR10GyroXBase)) / kGyroScale;
+                const float gy = static_cast<float>(readI16LE(bytes, kR10GyroYBase)) / kGyroScale;
+                const float gz = static_cast<float>(readI16LE(bytes, kR10GyroZBase)) / kGyroScale;
+                result.gyro = GyroRecord{ timestamp_ns, gx, gy, gz };
+                std::fprintf(stderr, "[parser] 🌀 GYRO x=%.2f y=%.2f z=%.2f\n", gx, gy, gz);
             }
 
             return result;
@@ -294,12 +297,21 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             if (bytes.size() < kR21MinFrame)
                 return result;
 
-            // Read 100 × uint32 LE for IR (chC) and Red (chF) channels.
+            // Read 100 × uint32 LE for Green, IR (chC), and Red (chF) channels.
             std::vector<double> ir(100), red(100);
+            std::vector<uint32_t> raw_green(100), raw_red(100), raw_ir(100);
             for (size_t i = 0; i < 100u; ++i) {
-                ir[i]  = static_cast<double>(readU32LE(bytes, kR21ChCBase + i * 4u));
-                red[i] = static_cast<double>(readU32LE(bytes, kR21ChFBase + i * 4u));
+                uint32_t c = readU32LE(bytes, kR21ChCBase + i * 4u);
+                uint32_t f = readU32LE(bytes, kR21ChFBase + i * 4u);
+                uint32_t g = readU32LE(bytes, kR21ChGreenBase + i * 4u);
+                ir[i]  = static_cast<double>(c);
+                red[i] = static_cast<double>(f);
+                raw_ir[i] = c;
+                raw_red[i] = f;
+                raw_green[i] = g;
             }
+
+            result.ppg_waveform = PpgWaveformRecord{ timestamp_ns, raw_green, raw_red, raw_ir };
 
             const double dc_ir  = mean(ir);
             const double dc_red = mean(red);

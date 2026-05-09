@@ -97,6 +97,9 @@ int main() {
             std::vector<whoop::SkinTempRecord>       skin_temp_batch;
             std::vector<whoop::SpO2Record>           spo2_batch;
             std::vector<whoop::RRIntervalRecord>     rr_batch;
+            std::vector<whoop::GyroRecord>           gyro_batch;
+            std::vector<whoop::DoubleTapRecord>      tap_batch;
+            std::vector<whoop::WristStateRecord>     wrist_batch;
             std::vector<std::string>                 ack_ids;
 
             raw_batch.reserve(it->second.size());
@@ -104,6 +107,9 @@ int main() {
             accel_batch.reserve(it->second.size());
             skin_temp_batch.reserve(it->second.size());
             spo2_batch.reserve(it->second.size());
+            gyro_batch.reserve(it->second.size());
+            tap_batch.reserve(it->second.size());
+            wrist_batch.reserve(it->second.size());
             ack_ids.reserve(it->second.size());
 
             for (const auto& [msg_id, opt_fields] : it->second) {
@@ -135,8 +141,11 @@ int main() {
 
                     if (r.hr)        hr_batch.push_back(*r.hr);
                     if (r.accel)     accel_batch.push_back(*r.accel);
+                    if (r.gyro)      gyro_batch.push_back(*r.gyro);
                     if (r.skin_temp) skin_temp_batch.push_back(*r.skin_temp);
                     if (r.spo2)      spo2_batch.push_back(*r.spo2);
+                    if (r.double_tap) tap_batch.push_back(*r.double_tap);
+                    if (r.wrist_state) wrist_batch.push_back(*r.wrist_state);
                     for (const auto& rr : r.rr_intervals)
                         rr_batch.push_back(rr);
 
@@ -168,6 +177,18 @@ int main() {
             if (!spo2_batch.empty()) {
                 db::insertSpO2Batch(ch, spo2_batch);
                 std::cout << "[worker] INSERT " << spo2_batch.size()       << " rows → whoop_spo2\n";
+            }
+            if (!gyro_batch.empty()) {
+                db::insertGyroBatch(ch, gyro_batch);
+                std::cout << "[worker] INSERT " << gyro_batch.size()       << " rows → whoop_gyro\n";
+            }
+            if (!tap_batch.empty()) {
+                db::insertDoubleTapBatch(ch, tap_batch);
+                std::cout << "[worker] INSERT " << tap_batch.size()        << " rows → whoop_double_tap\n";
+            }
+            if (!wrist_batch.empty()) {
+                db::insertWristStateBatch(ch, wrist_batch);
+                std::cout << "[worker] INSERT " << wrist_batch.size()      << " rows → whoop_wrist_state\n";
             }
             if (!rr_batch.empty()) {
                 db::insertRRBatch(ch, rr_batch);

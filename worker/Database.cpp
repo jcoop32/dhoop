@@ -120,5 +120,44 @@ void insertRRBatch(clickhouse::Client& ch, const std::vector<whoop::RRIntervalRe
     ch.Insert("whoop_rr_intervals", block);
 }
 
+void insertGyroBatch(clickhouse::Client& ch, const std::vector<whoop::GyroRecord>& records) {
+    if (records.empty()) return;
+    auto ts_col = std::make_shared<clickhouse::ColumnDateTime64>(9);
+    auto x_col  = std::make_shared<clickhouse::ColumnFloat32>();
+    auto y_col  = std::make_shared<clickhouse::ColumnFloat32>();
+    auto z_col  = std::make_shared<clickhouse::ColumnFloat32>();
+    for (const auto& r : records) {
+        ts_col->Append(r.timestamp_ns);
+        x_col->Append(r.x); y_col->Append(r.y); z_col->Append(r.z);
+    }
+    clickhouse::Block block;
+    block.AppendColumn("timestamp", ts_col);
+    block.AppendColumn("gx", x_col); block.AppendColumn("gy", y_col); block.AppendColumn("gz", z_col);
+    ch.Insert("whoop_gyro", block);
+}
+
+void insertDoubleTapBatch(clickhouse::Client& ch, const std::vector<whoop::DoubleTapRecord>& records) {
+    if (records.empty()) return;
+    auto ts_col = std::make_shared<clickhouse::ColumnDateTime64>(9);
+    for (const auto& r : records) ts_col->Append(r.timestamp_ns);
+    clickhouse::Block block;
+    block.AppendColumn("timestamp", ts_col);
+    ch.Insert("whoop_double_tap", block);
+}
+
+void insertWristStateBatch(clickhouse::Client& ch, const std::vector<whoop::WristStateRecord>& records) {
+    if (records.empty()) return;
+    auto ts_col = std::make_shared<clickhouse::ColumnDateTime64>(9);
+    auto state_col = std::make_shared<clickhouse::ColumnUInt8>();
+    for (const auto& r : records) {
+        ts_col->Append(r.timestamp_ns);
+        state_col->Append(r.on_wrist ? 1 : 0);
+    }
+    clickhouse::Block block;
+    block.AppendColumn("timestamp", ts_col);
+    block.AppendColumn("on_wrist", state_col);
+    ch.Insert("whoop_wrist_state", block);
+}
+
 } // namespace db
 

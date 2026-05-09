@@ -23,5 +23,9 @@ void insertSkinTempBatch (clickhouse::Client& ch, const std::vector<whoop::SkinT
 void insertSpO2Batch     (clickhouse::Client& ch, const std::vector<whoop::SpO2Record>&         records);
 void insertRRBatch       (clickhouse::Client& ch, const std::vector<whoop::RRIntervalRecord>&   records);
 
+void insertGyroBatch       (clickhouse::Client& ch, const std::vector<whoop::GyroRecord>&         records);
+void insertDoubleTapBatch  (clickhouse::Client& ch, const std::vector<whoop::DoubleTapRecord>&    records);
+void insertWristStateBatch (clickhouse::Client& ch, const std::vector<whoop::WristStateRecord>&   records);
+
 } // namespace db
 
