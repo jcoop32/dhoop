@@ -548,8 +548,9 @@ async def get_history():
         "SELECT date, "
         "toInt32(sleep_score) AS sleep_score, "
         "daily_strain AS strain, "
-        "resting_hr, hrv_rmssd "
-        "FROM dhoop.whoop_daily_summary "
+        "resting_hr, hrv_rmssd, "
+        "sleep_duration_min, time_in_bed_min, disturbances "
+        "FROM dhoop.whoop_daily_summary FINAL "
         "WHERE date >= today() - 14 "
         "ORDER BY date ASC FORMAT JSON"
     )
