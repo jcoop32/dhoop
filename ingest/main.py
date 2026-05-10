@@ -242,7 +242,7 @@ async def _save_daily_summary(date: str, updates: dict) -> None:
     # Step A — read existing row (if any)
     fetch_q = (
         f"SELECT sleep_score, daily_strain, resting_hr, hrv_rmssd, "
-        f"sleep_duration_min, time_in_bed_min, disturbances "
+        f"sleep_duration_min, time_in_bed_min, disturbances, recovery_score "
         f"FROM dhoop.whoop_daily_summary WHERE date = '{date}' LIMIT 1 FORMAT JSON"
     )
     row: dict = {
@@ -254,6 +254,7 @@ async def _save_daily_summary(date: str, updates: dict) -> None:
         "sleep_duration_min": 0.0,
         "time_in_bed_min": 0.0,
         "disturbances": 0,
+        "recovery_score": 0.0,
     }
     try:
         resp = await http_client.post("/", params={"query": fetch_q})
@@ -271,11 +272,11 @@ async def _save_daily_summary(date: str, updates: dict) -> None:
     insert_q = (
         f"INSERT INTO dhoop.whoop_daily_summary "
         f"(date, sleep_score, daily_strain, resting_hr, hrv_rmssd, "
-        f"sleep_duration_min, time_in_bed_min, disturbances) VALUES "
+        f"sleep_duration_min, time_in_bed_min, disturbances, recovery_score) VALUES "
         f"('{row['date']}', {float(row['sleep_score'])}, {float(row['daily_strain'])}, "
         f"{float(row['resting_hr'])}, {float(row['hrv_rmssd'])}, "
         f"{float(row['sleep_duration_min'])}, {float(row['time_in_bed_min'])}, "
-        f"{int(row['disturbances'])})"
+        f"{int(row['disturbances'])}, {float(row['recovery_score'])})"
     )
     await http_client.post("/", params={"query": insert_q})
 
@@ -283,11 +284,20 @@ async def _save_daily_summary(date: str, updates: dict) -> None:
 # ---------------------------------------------------------------------------
 # Daily Strain  (/api/strain)
 # ---------------------------------------------------------------------------
+# WHOOP 5-zone HR model multipliers (matches Borg RPE zones)
+# Zone 1: 50-60% HRR = 0.1x  (very light, barely counts)
+# Zone 2: 60-70% HRR = 0.5x  (aerobic base, Zone 2 training)
+# Zone 3: 70-80% HRR = 1.0x  (aerobic threshold)
+# Zone 4: 80-90% HRR = 2.0x  (lactate threshold, high intensity)
+# Zone 5: 90-100% HRR = 4.0x (VO2max, red zone)
+HR_ZONE_MULTIPLIERS = [0.0, 0.1, 0.5, 1.0, 2.0, 4.0]
+
 @app.get("/api/strain", tags=["metrics"])
 async def get_daily_strain():
     """
-    Calculates a Whoop-style Daily Strain (0–21) using the TRIMP exponential
-    weighting model applied to the last 24 hours of heart-rate data.
+    Calculates WHOOP-style Daily Strain (0-21) using a 5-zone HR model.
+    WHOOP uses time-in-zone weighted by zone multipliers, normalized to a log scale.
+    Zones are defined as % of Heart Rate Reserve (HRR = MaxHR - RHR).
     """
     hr_q = (
         "SELECT timestamp, hr FROM dhoop.whoop_hr "
@@ -302,31 +312,48 @@ async def get_daily_strain():
         raise HTTPException(status_code=502, detail=str(e))
 
     if len(rows) < 2:
-        return {"status": "insufficient_data", "strain": None, "trimp": None}
+        return {"status": "insufficient_data", "strain": None}
 
     df = pd.DataFrame(rows)
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df["hr"] = pd.to_numeric(df["hr"], errors="coerce")
     df = df.dropna(subset=["hr"]).sort_values("timestamp").reset_index(drop=True)
 
-    # Resting HR = lowest 5-minute rolling mean
-    df = df.set_index("timestamp")
-    rolling_min = df["hr"].rolling("5min").mean().min()
-    resting_hr = float(rolling_min) if not np.isnan(rolling_min) else 50.0
-    df = df.reset_index()
+    # Resting HR = 10th percentile of all readings (more robust than rolling min)
+    resting_hr = float(np.percentile(df["hr"].values, 10))
+    hr_reserve = max(1.0, MAX_HR - resting_hr)
 
-    # TRIMP: Σ ΔT(min) × HR_ratio × e^(1.92 × HR_ratio)
-    hr_range = MAX_HR - resting_hr
-    total_trimp = 0.0
+    # Zone boundaries as % of HRR (Karvonen method)
+    # Zone 0: below 50% HRR, Zone 1: 50-60%, ..., Zone 5: 90%+
+    zone_thresholds = [0.50, 0.60, 0.70, 0.80, 0.90, 1.01]
+
+    zone_minutes = [0.0] * 6
+    total_active_minutes = 0.0
+
     for i in range(1, len(df)):
-        dt_min = (df.loc[i, "timestamp"] - df.loc[i - 1, "timestamp"]).total_seconds() / 60
+        dt_sec = (df.loc[i, "timestamp"] - df.loc[i-1, "timestamp"]).total_seconds()
+        # Skip gaps > 5 min (app disconnected, band off)
+        if dt_sec > 300:
+            continue
+        dt_min = dt_sec / 60.0
         hr_val = float(df.loc[i, "hr"])
-        hr_ratio = max(0.0, (hr_val - resting_hr) / hr_range) if hr_range > 0 else 0.0
-        total_trimp += dt_min * hr_ratio * np.exp(1.92 * hr_ratio)
+        hrr_pct = (hr_val - resting_hr) / hr_reserve
 
-    # Map TRIMP → 0–21 log scale (reference ceiling: TRIMP ~600 = strain 21)
-    TRIMP_CEIL = 600.0
-    strain = round(21.0 * np.log1p(total_trimp) / np.log1p(TRIMP_CEIL), 2)
+        zone = 0
+        for z, thresh in enumerate(zone_thresholds):
+            if hrr_pct >= thresh:
+                zone = z + 1
+        zone = min(zone, 5)
+        zone_minutes[zone] += dt_min
+        total_active_minutes += dt_min
+
+    # Weighted score = Σ (zone_minutes × zone_multiplier)
+    weighted_score = sum(zone_minutes[z] * HR_ZONE_MULTIPLIERS[z] for z in range(6))
+
+    # Map weighted score → 0-21 log scale
+    # Calibration: ~480 weighted minutes (e.g. 2h Zone 4) → strain 21
+    WEIGHTED_CEIL = 480.0
+    strain = round(21.0 * np.log1p(weighted_score) / np.log1p(WEIGHTED_CEIL), 2)
     strain = min(21.0, max(0.0, strain))
 
     today = pd.Timestamp.now(tz="UTC").date().isoformat()
@@ -335,9 +362,10 @@ async def get_daily_strain():
     return {
         "status": "ok",
         "strain": strain,
-        "trimp": round(total_trimp, 2),
         "resting_hr": round(resting_hr, 1),
         "max_hr": MAX_HR,
+        "zone_minutes": {f"zone_{z}": round(zone_minutes[z], 1) for z in range(6)},
+        "total_active_minutes": round(total_active_minutes, 1),
         "samples_analyzed": len(df),
     }
 
@@ -402,21 +430,33 @@ async def get_sleep_analysis():
 
     VARIANCE_THRESHOLD = 0.01
     MIN_SLEEP_WINDOW   = pd.Timedelta(minutes=15)
-    sleep_onset = wake_time = asleep_since = None
+    sleep_onset = wake_time = None
 
+    # 1. Find sleep onset: the start of the first 15-minute block of stillness
+    asleep_since = None
     for ts, row in accel_df.iterrows():
         if row["variance"] < VARIANCE_THRESHOLD:
             if asleep_since is None:
                 asleep_since = ts
-            elif (ts - asleep_since) >= MIN_SLEEP_WINDOW and sleep_onset is None:
+            elif (ts - asleep_since) >= MIN_SLEEP_WINDOW:
                 sleep_onset = asleep_since
-        else:
-            if sleep_onset is not None and wake_time is None:
-                wake_time = ts
                 break
+        else:
             asleep_since = None
 
-    if sleep_onset is None:
+    # 2. Find wake time: the end of the last 15-minute block of stillness
+    awake_since = None
+    for ts, row in accel_df.iloc[::-1].iterrows():
+        if row["variance"] < VARIANCE_THRESHOLD:
+            if awake_since is None:
+                awake_since = ts
+            elif (awake_since - ts) >= MIN_SLEEP_WINDOW:
+                wake_time = awake_since
+                break
+        else:
+            awake_since = None
+
+    if sleep_onset is None or wake_time is None or wake_time <= sleep_onset:
         return {
             "status": "no_sleep_detected",
             "sleep_onset": None, "wake_time": None,
@@ -425,13 +465,16 @@ async def get_sleep_analysis():
             "data_points_analyzed": len(accel_df),
         }
 
-    if wake_time is None:
-        wake_time = accel_df.index[-1]
-
-    duration_minutes = (wake_time - sleep_onset).total_seconds() / 60
-    # time_in_bed = first accel sample to wake (conservative proxy)
-    time_in_bed_min  = (wake_time - accel_df.index[0]).total_seconds() / 60
-    efficiency = round(duration_minutes / time_in_bed_min, 3) if time_in_bed_min > 0 else None
+    # time_in_bed is the full window from onset to wake
+    time_in_bed_min = (wake_time - sleep_onset).total_seconds() / 60
+    
+    # Calculate efficiency by measuring how many periods inside the window had high variance (restlessness)
+    sleep_window = accel_df[(accel_df.index >= sleep_onset) & (accel_df.index <= wake_time)]
+    low_var_count = len(sleep_window[sleep_window["variance"] < 0.05])
+    efficiency = round(low_var_count / len(sleep_window), 3) if len(sleep_window) > 0 else 0.85
+    
+    # Actual sleep is time in bed minus restlessness
+    duration_minutes = time_in_bed_min * efficiency
 
     # ── HR within sleep window ────────────────────────────────────────────
     avg_sleeping_hr = resting_hr_sleep = None
@@ -463,10 +506,29 @@ async def get_sleep_analysis():
             diffs = np.diff(sleep_rr.astype(float))
             hrv_rmssd = round(float(np.sqrt(np.mean(diffs**2))), 1)
 
-    # Sleep score: composite of efficiency (60%), HRV presence (20%), RHR dip (20%)
-    sleep_score = round(min(100.0, (efficiency or 0) * 100 * 0.6
-                        + (20.0 if hrv_rmssd and hrv_rmssd > 20 else 0)
-                        + (20.0 if resting_hr_sleep and resting_hr_sleep < 65 else 0)), 1)
+    # ── WHOOP-style Sleep Performance Score ──────────────────────────────
+    # Component 1: Sleep Sufficiency — hours slept vs. 8h target (40%)
+    # WHOOP uses your personal sleep need; we default to 8h (480 min)
+    SLEEP_NEEDED_MIN = 480.0
+    sufficiency = min(1.0, duration_minutes / SLEEP_NEEDED_MIN)
+    sufficiency_score = sufficiency * 40.0
+
+    # Component 2: Sleep Efficiency — % of time in bed actually asleep (30%)
+    efficiency_score = (efficiency or 0.0) * 30.0
+
+    # Component 3: HRV Quality — above 20ms is meaningful (20%)
+    # Scale: 20ms=10pts, 60ms=20pts (linear)
+    hrv_score = 0.0
+    if hrv_rmssd and hrv_rmssd > 0:
+        hrv_score = min(20.0, max(0.0, (hrv_rmssd - 20.0) / 40.0 * 20.0))
+
+    # Component 4: Nocturnal RHR dip — good sleep = HR drops below 65 (10%)
+    # Scale: 55bpm or below=10pts, 70bpm+=0pts
+    rhr_score = 0.0
+    if resting_hr_sleep and resting_hr_sleep > 0:
+        rhr_score = min(10.0, max(0.0, (70.0 - resting_hr_sleep) / 15.0 * 10.0))
+
+    sleep_score = round(min(100.0, sufficiency_score + efficiency_score + hrv_score + rhr_score), 1)
 
     today = pd.Timestamp.now(tz="UTC").date().isoformat()
     await _save_daily_summary(today, {
@@ -485,10 +547,205 @@ async def get_sleep_analysis():
         "time_in_bed_minutes": round(time_in_bed_min, 1),
         "sleep_efficiency": efficiency,
         "sleep_score": sleep_score,
+        "score_breakdown": {
+            "sufficiency_pts": round(sufficiency_score, 1),
+            "efficiency_pts": round(efficiency_score, 1),
+            "hrv_pts": round(hrv_score, 1),
+            "rhr_pts": round(rhr_score, 1),
+        },
         "average_sleeping_hr": avg_sleeping_hr,
         "resting_hr": resting_hr_sleep,
         "hrv_rmssd": hrv_rmssd,
         "data_points_analyzed": len(accel_df),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Recovery Score  (/api/recovery)
+# ---------------------------------------------------------------------------
+@app.get("/api/recovery", tags=["metrics"])
+async def get_recovery_score():
+    """
+    WHOOP-style Recovery (1-100%) composed of four factors:
+      - HRV (RMSSD) vs. personal 30-day baseline  → 50% weight
+      - Resting HR vs. personal 30-day baseline    → 25% weight
+      - Sleep Performance score                    → 15% weight
+      - HR Consistency overnight (proxy for resp rate stability) → 10% weight
+
+    Recovery zones: Green 67-100%, Yellow 34-66%, Red 1-33%
+    """
+    today = pd.Timestamp.now(tz="UTC").date().isoformat()
+
+    # Fetch today's summary for sleep score, resting HR, and HRV
+    today_q = (
+        f"SELECT sleep_score, resting_hr, hrv_rmssd "
+        f"FROM dhoop.whoop_daily_summary FINAL "
+        f"WHERE date = '{today}' FORMAT JSON"
+    )
+    # Fetch 30-day baselines for personalisation
+    baseline_q = (
+        "SELECT avg(hrv_rmssd) AS hrv_avg, stddev(hrv_rmssd) AS hrv_std, "
+        "avg(resting_hr) AS rhr_avg, stddev(resting_hr) AS rhr_std "
+        "FROM dhoop.whoop_daily_summary FINAL "
+        "WHERE date >= today() - 30 AND hrv_rmssd > 0 AND resting_hr > 0 FORMAT JSON"
+    )
+    try:
+        t_resp = await http_client.post("/", params={"query": today_q})
+        b_resp = await http_client.post("/", params={"query": baseline_q})
+        t_resp.raise_for_status()
+        b_resp.raise_for_status()
+        today_rows = t_resp.json().get("data", [])
+        base_rows  = b_resp.json().get("data", [])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if not today_rows:
+        return {"status": "no_data", "recovery": None, "zone": None}
+
+    td  = today_rows[0]
+    bas = base_rows[0] if base_rows else {}
+
+    hrv_today  = float(td.get("hrv_rmssd") or 0)
+    rhr_today  = float(td.get("resting_hr") or 0)
+    sleep_perf = float(td.get("sleep_score") or 0) / 100.0
+
+    hrv_avg = float(bas.get("hrv_avg") or hrv_today or 50.0)
+    hrv_std = float(bas.get("hrv_std") or 10.0)
+    rhr_avg = float(bas.get("rhr_avg") or rhr_today or 60.0)
+    rhr_std = float(bas.get("rhr_std") or 5.0)
+
+    # ── Component 1: HRV z-score → 0-1 (50% weight) ─────────────────────
+    # z-score tells how many std devs above/below your personal average
+    # +2 SD above baseline = 100%, -2 SD = 0%
+    if hrv_today > 0 and hrv_std > 0:
+        hrv_z = (hrv_today - hrv_avg) / hrv_std
+        hrv_pct = min(1.0, max(0.0, (hrv_z + 2.0) / 4.0))
+    elif hrv_today > 0:
+        # No baseline yet: scale 20-80ms → 0-100%
+        hrv_pct = min(1.0, max(0.0, (hrv_today - 20.0) / 60.0))
+    else:
+        hrv_pct = 0.5  # neutral if no data
+
+    # ── Component 2: RHR z-score → 0-1 (25% weight, inverted) ───────────
+    # Lower RHR = better recovery, so invert the z-score
+    if rhr_today > 0 and rhr_std > 0:
+        rhr_z = (rhr_today - rhr_avg) / rhr_std
+        rhr_pct = min(1.0, max(0.0, (-rhr_z + 2.0) / 4.0))  # inverted
+    elif rhr_today > 0:
+        # No baseline: scale 45-75bpm → 100-0% (lower is better)
+        rhr_pct = min(1.0, max(0.0, (75.0 - rhr_today) / 30.0))
+    else:
+        rhr_pct = 0.5
+
+    # ── Component 3: Sleep Performance (15% weight) ───────────────────────
+    sleep_pct = sleep_perf  # already 0-1
+
+    # ── Component 4: HR Overnight Consistency (10% weight) ────────────────
+    # Proxy: standard deviation of HR during sleep — lower = better
+    hr_q = (
+        "SELECT hr FROM dhoop.whoop_hr "
+        "WHERE timestamp >= now() - INTERVAL 10 HOUR FORMAT JSON"
+    )
+    hr_std_pct = 0.5  # neutral default
+    try:
+        hr_resp = await http_client.post("/", params={"query": hr_q})
+        hr_rows = hr_resp.json().get("data", [])
+        if len(hr_rows) > 10:
+            hrs = np.array([float(r["hr"]) for r in hr_rows if r.get("hr")])
+            hr_std = float(np.std(hrs))
+            # Low std dev (< 5bpm) = consistent = good. High (> 20bpm) = bad.
+            hr_std_pct = min(1.0, max(0.0, (20.0 - hr_std) / 15.0))
+    except Exception:
+        pass
+
+    # ── Composite score ───────────────────────────────────────────────────
+    recovery_raw = (hrv_pct * 0.50) + (rhr_pct * 0.25) + (sleep_pct * 0.15) + (hr_std_pct * 0.10)
+    recovery = round(max(1, min(100, recovery_raw * 100)))
+
+    zone = "green" if recovery >= 67 else ("yellow" if recovery >= 34 else "red")
+
+    # Persist to daily summary
+    await _save_daily_summary(today, {"recovery_score": float(recovery)})
+
+    return {
+        "status": "ok",
+        "recovery": recovery,
+        "zone": zone,
+        "components": {
+            "hrv_pct": round(hrv_pct * 100, 1),
+            "rhr_pct": round(rhr_pct * 100, 1),
+            "sleep_pct": round(sleep_pct * 100, 1),
+            "hr_consistency_pct": round(hr_std_pct * 100, 1),
+        },
+        "hrv_rmssd": hrv_today or None,
+        "resting_hr": rhr_today or None,
+        "sleep_score": float(td.get("sleep_score") or 0) or None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Daily Outlook  (/api/daily-outlook)
+# ---------------------------------------------------------------------------
+@app.get("/api/daily-outlook", tags=["metrics"])
+async def get_daily_outlook():
+    """
+    WHOOP-style Daily Outlook — analyzes overnight recovery data (HRV, RHR,
+    sleep quality, and yesterday's strain) and returns a personalized
+    coaching summary with zone, optimal strain target range, and advice sentence.
+    """
+    # Re-use recovery endpoint logic
+    rec_data = await get_recovery_score()
+    recovery = rec_data.get("recovery") or 50
+    zone     = rec_data.get("zone", "yellow")
+
+    # Yesterday's strain for context
+    yesterday = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1)).date().isoformat()
+    yesterday_q = (
+        f"SELECT daily_strain FROM dhoop.whoop_daily_summary FINAL "
+        f"WHERE date = '{yesterday}' FORMAT JSON"
+    )
+    prev_strain = None
+    try:
+        y_resp = await http_client.post("/", params={"query": yesterday_q})
+        y_rows = y_resp.json().get("data", [])
+        if y_rows:
+            prev_strain = float(y_rows[0].get("daily_strain") or 0) or None
+    except Exception:
+        pass
+
+    # Strain target based on recovery zone (matches WHOOP's Strain Target feature)
+    if zone == "green":
+        strain_min, strain_max = 14.0, 18.0
+        zone_label = "Green"
+        advice = (
+            "Your body is well recovered and primed to perform. "
+            "Push for a high-strain day — aim for a workout in Zone 3-4 to build fitness."
+        )
+    elif zone == "yellow":
+        strain_min, strain_max = 10.0, 14.0
+        zone_label = "Yellow"
+        advice = (
+            "Your body is maintaining and ready for moderate effort. "
+            "Stick to Zone 2 cardio or a moderate strength session today."
+        )
+    else:
+        strain_min, strain_max = 7.0, 10.0
+        zone_label = "Red"
+        advice = (
+            "Your body is working hard to recover. Prioritize rest or active recovery — "
+            "a walk, yoga, or light stretching will help without adding to your load."
+        )
+
+    if prev_strain and prev_strain > 16:
+        advice += f" Yesterday's high strain ({prev_strain:.1f}) means your body especially needs today's recovery."
+
+    return {
+        "status": "ok",
+        "recovery": recovery,
+        "zone": zone_label,
+        "strain_target": {"min": strain_min, "max": strain_max},
+        "advice": advice,
+        "previous_strain": prev_strain,
     }
 
 

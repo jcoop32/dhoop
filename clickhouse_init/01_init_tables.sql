@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS whoop_daily_summary
     hrv_rmssd            Float32,
     sleep_duration_min   Float32,
     time_in_bed_min      Float32,
-    disturbances         UInt16
+    disturbances         UInt16,
+    recovery_score       Float32   -- WHOOP-style 1-100% composite (HRV 50% + RHR 25% + Sleep 15% + HR consistency 10%)
 )
 ENGINE = ReplacingMergeTree()
 ORDER BY date;
