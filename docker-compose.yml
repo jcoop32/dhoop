@@ -44,8 +44,7 @@ services:
       dockerfile: Dockerfile
     container_name: whoop_ingest
     restart: unless-stopped
-    ports:
-      - "100.127.237.13:9001:9001"  # Tailscale only — not reachable from public internet
+
     environment:
       REDIS_URL: redis://redis:6379        # internal Docker network — always 6379 here
       CLICKHOUSE_URL: http://clickhouse:8123  # internal HTTP interface
@@ -68,17 +67,15 @@ services:
       dockerfile: Dockerfile
     container_name: whoop_worker
     restart: unless-stopped
+    ports:
+      - "100.127.237.13:9001:9001/udp"  # Expose UDP port for iOS app
     environment:
-      REDIS_URL:           redis://redis:6379   # internal Docker network
-      REDIS_STREAM:        whoop_raw_stream
       CLICKHOUSE_HOST:     clickhouse
       CLICKHOUSE_PORT:     9000                 # binary TCP — used by clickhouse-cpp
       CLICKHOUSE_DB:       ${CLICKHOUSE_DB}
       CLICKHOUSE_USER:     ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     depends_on:
-      redis:
-        condition: service_healthy
       clickhouse:
         condition: service_healthy
 
