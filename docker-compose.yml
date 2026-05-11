@@ -44,7 +44,8 @@ services:
       dockerfile: Dockerfile
     container_name: whoop_ingest
     restart: unless-stopped
-
+    ports:
+      - "100.127.237.13:9001:9001/tcp"  # RESTORED: TCP for Web Dashboard & iOS HTTP API
     environment:
       REDIS_URL: redis://redis:6379        # internal Docker network — always 6379 here
       CLICKHOUSE_URL: http://clickhouse:8123  # internal HTTP interface
