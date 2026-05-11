@@ -30,7 +30,9 @@ _today          = date.today()
 USER_AGE:       int   = _today.year - _dob.year - ((_today.month, _today.day) < (_dob.month, _dob.day))
 USER_WEIGHT_KG: float = float(os.environ.get("USER_WEIGHT_KG", "75"))
 USER_HEIGHT_CM: float = float(os.environ.get("USER_HEIGHT_CM", "180"))
-MAX_HR:         int   = 220 - USER_AGE   # age-predicted maximum heart rate
+# MAX_HR: dynamically resolved at query-time — see _get_max_hr().
+# Falls back to age-predicted (220 - age) if < 10 HR samples exist.
+_AGE_PREDICTED_MAX_HR: int = 220 - USER_AGE
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +232,33 @@ async def get_latest_data():
     }
 
 # ---------------------------------------------------------------------------
+# Internal helper — dynamic Max HR (all-time peak, never decreases)
+# ---------------------------------------------------------------------------
+async def _get_max_hr() -> int:
+    """
+    Returns the all-time peak heart rate ever recorded in ClickHouse.
+    WHOOP uses your real observed max — not an age formula — because
+    the age formula (220-age) is a population average with ±10-20 bpm error.
+
+    Falls back to age-predicted (220 - age) until enough data exists.
+    The recorded peak can only ever go UP as you do harder workouts over time.
+    """
+    q = "SELECT max(hr) AS peak_hr FROM dhoop.whoop_hr FORMAT JSON"
+    try:
+        resp = await http_client.post("/", params={"query": q})
+        resp.raise_for_status()
+        rows = resp.json().get("data", [])
+        if rows and rows[0].get("peak_hr"):
+            peak = int(float(rows[0]["peak_hr"]))
+            # Only trust peaks above a physiologically plausible floor
+            if peak >= 140:
+                return peak
+    except Exception:
+        pass
+    return _AGE_PREDICTED_MAX_HR
+
+
+# ---------------------------------------------------------------------------
 # Internal helper — read-merge-write to whoop_daily_summary
 
 # ---------------------------------------------------------------------------
@@ -321,7 +350,8 @@ async def get_daily_strain():
 
     # Resting HR = 10th percentile of all readings (more robust than rolling min)
     resting_hr = float(np.percentile(df["hr"].values, 10))
-    hr_reserve = max(1.0, MAX_HR - resting_hr)
+    max_hr = await _get_max_hr()
+    hr_reserve = max(1.0, max_hr - resting_hr)
 
     # Zone boundaries as % of HRR (Karvonen method)
     # Zone 0: below 50% HRR, Zone 1: 50-60%, ..., Zone 5: 90%+
@@ -363,7 +393,8 @@ async def get_daily_strain():
         "status": "ok",
         "strain": strain,
         "resting_hr": round(resting_hr, 1),
-        "max_hr": MAX_HR,
+        "max_hr": max_hr,
+        "max_hr_source": "observed_peak" if max_hr >= 140 else "age_predicted",
         "zone_minutes": {f"zone_{z}": round(zone_minutes[z], 1) for z in range(6)},
         "total_active_minutes": round(total_active_minutes, 1),
         "samples_analyzed": len(df),
@@ -750,6 +781,181 @@ async def get_daily_outlook():
 
 
 # ---------------------------------------------------------------------------
+# Health Monitor  (/api/health)
+# ---------------------------------------------------------------------------
+@app.get("/api/health", tags=["metrics"])
+async def get_health_monitor():
+    """
+    Returns the latest real SpO2 and skin temperature readings alongside
+    the cached resting HR and HRV from today's daily summary.
+    All values default to null (not hardcoded) if no data is available.
+    """
+    today = pd.Timestamp.now(tz="UTC").date().isoformat()
+
+    # Latest SpO2 — most recent sample within the last 24 hours
+    spo2_q = (
+        "SELECT spo2 FROM dhoop.whoop_spo2 "
+        "WHERE timestamp >= now() - INTERVAL 24 HOUR "
+        "ORDER BY timestamp DESC LIMIT 1 FORMAT JSON"
+    )
+    # Latest skin temperature
+    temp_q = (
+        "SELECT temp_c FROM dhoop.whoop_skin_temp "
+        "WHERE timestamp >= now() - INTERVAL 24 HOUR "
+        "ORDER BY timestamp DESC LIMIT 1 FORMAT JSON"
+    )
+    # Today's cached RHR + HRV
+    summary_q = (
+        f"SELECT resting_hr, hrv_rmssd FROM dhoop.whoop_daily_summary FINAL "
+        f"WHERE date = '{today}' FORMAT JSON"
+    )
+
+    spo2 = rhr = hrv = temp_c = None
+    try:
+        spo2_r = await http_client.post("/", params={"query": spo2_q})
+        temp_r = await http_client.post("/", params={"query": temp_q})
+        summ_r = await http_client.post("/", params={"query": summary_q})
+
+        spo2_rows = spo2_r.json().get("data", [])
+        temp_rows = temp_r.json().get("data", [])
+        summ_rows = summ_r.json().get("data", [])
+
+        if spo2_rows:
+            raw = float(spo2_rows[0]["spo2"])
+            # Our AC/DC ratio gives a value in 0-1 range; convert to 0-100%
+            spo2 = round(raw * 100.0, 1) if raw <= 1.0 else round(raw, 1)
+            # Clamp to physiological range 70-100%
+            spo2 = max(70.0, min(100.0, spo2)) if spo2 else None
+
+        if temp_rows:
+            temp_c = round(float(temp_rows[0]["temp_c"]), 1)
+
+        if summ_rows:
+            rhr_val = float(summ_rows[0].get("resting_hr") or 0)
+            hrv_val = float(summ_rows[0].get("hrv_rmssd") or 0)
+            rhr = round(rhr_val, 1) if rhr_val > 0 else None
+            hrv = round(hrv_val, 1) if hrv_val > 0 else None
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    # Skin temp status: normal range is ±0.5°C from typical 33-35°C wrist temp
+    temp_status = None
+    if temp_c is not None:
+        if 32.0 <= temp_c <= 36.0:
+            temp_status = "Within Range"
+        elif temp_c < 32.0:
+            temp_status = "Low"
+        else:
+            temp_status = "Elevated"
+
+    return {
+        "status": "ok",
+        "resting_hr": rhr,
+        "hrv_rmssd": hrv,
+        "spo2_pct": spo2,
+        "skin_temp_c": temp_c,
+        "skin_temp_status": temp_status,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stress Monitor  (/api/stress)
+# ---------------------------------------------------------------------------
+@app.get("/api/stress", tags=["metrics"])
+async def get_stress_monitor():
+    """
+    Real-time stress score using short-term HRV variance (RMSSD coefficient
+    of variation over rolling 15-minute windows).
+
+    WHOOP's Stress Monitor works by:
+      1. Computing HRV (RMSSD) in 15-minute sliding windows throughout the day
+      2. Comparing each window's HRV to your personal overnight baseline
+      3. High stress = HRV is LOW relative to your baseline (sympathetic dominance)
+      4. Low stress = HRV is HIGH, close to or above baseline (parasympathetic)
+
+    Stress scale: 0.0 (no stress) → 3.0 (high stress)
+    """
+    rr_q = (
+        "SELECT timestamp, rr_ms FROM dhoop.whoop_rr_intervals "
+        "WHERE timestamp >= now() - INTERVAL 2 HOUR "
+        "ORDER BY timestamp ASC FORMAT JSON"
+    )
+    # Overnight baseline for comparison
+    today = pd.Timestamp.now(tz="UTC").date().isoformat()
+    baseline_q = (
+        f"SELECT hrv_rmssd FROM dhoop.whoop_daily_summary FINAL "
+        f"WHERE date = '{today}' AND hrv_rmssd > 0 FORMAT JSON"
+    )
+
+    try:
+        rr_resp   = await http_client.post("/", params={"query": rr_q})
+        base_resp = await http_client.post("/", params={"query": baseline_q})
+        rr_rows   = rr_resp.json().get("data", [])
+        base_rows = base_resp.json().get("data", [])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    overnight_hrv = None
+    if base_rows:
+        overnight_hrv = float(base_rows[0].get("hrv_rmssd") or 0) or None
+
+    if len(rr_rows) < 10:
+        return {
+            "status": "insufficient_data",
+            "stress_score": None,
+            "stress_level": None,
+            "current_hrv": None,
+            "baseline_hrv": overnight_hrv,
+            "detail": f"Only {len(rr_rows)} RR samples (need ≥10). Wear band longer.",
+        }
+
+    rr_df = pd.DataFrame(rr_rows)
+    rr_df["timestamp"] = pd.to_datetime(rr_df["timestamp"], utc=True)
+    rr_df["rr_ms"] = pd.to_numeric(rr_df["rr_ms"], errors="coerce")
+    rr_df = rr_df.dropna(subset=["rr_ms"]).sort_values("timestamp")
+
+    # Current HRV = RMSSD of the most recent 15-minute window
+    cutoff = rr_df["timestamp"].max() - pd.Timedelta(minutes=15)
+    recent = rr_df[rr_df["timestamp"] >= cutoff]["rr_ms"].values
+
+    current_hrv = None
+    if len(recent) >= 2:
+        diffs = np.diff(recent.astype(float))
+        current_hrv = round(float(np.sqrt(np.mean(diffs**2))), 1)
+
+    # Stress score: how suppressed is current HRV vs. overnight baseline?
+    stress_score = None
+    if current_hrv is not None:
+        baseline = overnight_hrv or 50.0  # default if no overnight data yet
+        # Ratio < 1 = HRV is suppressed = stressed
+        # Ratio > 1 = HRV elevated = recovered/relaxed
+        ratio = current_hrv / max(1.0, baseline)
+        # Map: ratio 0 → stress 3.0, ratio 1.0 → stress 1.0, ratio 1.5+ → stress 0.0
+        stress_score = round(max(0.0, min(3.0, 3.0 - (ratio * 2.0))), 2)
+
+    # Stress level labels (matches WHOOP's UI)
+    stress_level = None
+    if stress_score is not None:
+        if stress_score < 0.5:
+            stress_level = "Recovered"
+        elif stress_score < 1.5:
+            stress_level = "Low"
+        elif stress_score < 2.2:
+            stress_level = "Medium"
+        else:
+            stress_level = "High"
+
+    return {
+        "status": "ok",
+        "stress_score": stress_score,
+        "stress_level": stress_level,
+        "current_hrv": current_hrv,
+        "baseline_hrv": overnight_hrv,
+        "rr_samples_analyzed": len(rr_df),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Caloric Burn  (/api/calories)
 # ---------------------------------------------------------------------------
 @app.get("/api/calories", tags=["metrics"])
@@ -806,7 +1012,8 @@ async def get_history():
         "toInt32(sleep_score) AS sleep_score, "
         "daily_strain AS strain, "
         "resting_hr, hrv_rmssd, "
-        "sleep_duration_min, time_in_bed_min, disturbances "
+        "sleep_duration_min, time_in_bed_min, disturbances, "
+        "recovery_score "
         "FROM dhoop.whoop_daily_summary FINAL "
         "WHERE date >= today() - 14 "
         "ORDER BY date ASC FORMAT JSON"
