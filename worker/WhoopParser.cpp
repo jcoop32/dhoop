@@ -297,21 +297,12 @@ ParseResult parse(const std::string& hex_string, uint64_t timestamp_ns) {
             if (bytes.size() < kR21MinFrame)
                 return result;
 
-            // Read 100 × uint32 LE for Green, IR (chC), and Red (chF) channels.
+            // Read 100 × uint16 LE for IR (chC) and Red (chF) channels.
             std::vector<double> ir(100), red(100);
-            std::vector<uint32_t> raw_green(100), raw_red(100), raw_ir(100);
             for (size_t i = 0; i < 100u; ++i) {
-                uint32_t c = readU32LE(bytes, kR21ChCBase + i * 4u);
-                uint32_t f = readU32LE(bytes, kR21ChFBase + i * 4u);
-                uint32_t g = readU32LE(bytes, kR21ChGreenBase + i * 4u);
-                ir[i]  = static_cast<double>(c);
-                red[i] = static_cast<double>(f);
-                raw_ir[i] = c;
-                raw_red[i] = f;
-                raw_green[i] = g;
+                ir[i]  = static_cast<double>(readU16LE(bytes, kR21ChCBase + i * 2u));
+                red[i] = static_cast<double>(readU16LE(bytes, kR21ChFBase + i * 2u));
             }
-
-            result.ppg_waveform = PpgWaveformRecord{ timestamp_ns, raw_green, raw_red, raw_ir };
 
             const double dc_ir  = mean(ir);
             const double dc_red = mean(red);
